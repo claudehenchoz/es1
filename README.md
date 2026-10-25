@@ -1,0 +1,42 @@
+# ES 1 (Elektronischer Synthesizer)
+
+ES 1 is the synthesizer that Braun never made.
+
+* 100% Dieter Rams aesthetics & design
+* VST3 only
+* Rust
+* Maximum performance
+
+## What's inside
+
+ES 1's engine follows the architecture and parameter set of Daichi's Synth1, reverse-engineered
+from the 1.13 binary (see [docs/synth1-spec.md](docs/synth1-spec.md)), but the DSP is new:
+band-limited oscillators and zero-delay-feedback filters.
+
+* 2 oscillators + sub, FM, ring, sync, 8-voice osc 1 detune, mod envelope
+* 5 filters: LP 12 / LP 24 / HP 12 / BP 12 / LP diode ladder, with saturation
+* 2 LFOs (tempo sync, key sync), poly / mono / legato, portamento, up to 8-voice unison, 32 voices
+* Effect block (drive ×3, lo-fi, ring, compressor, phaser), EQ, tempo delay, chorus/flanger, arpeggiator
+* The 128 Synth1 factory sounds built in, plus an importer for any `.sy1` file or `.zip` bank
+
+## Build
+
+```sh
+cargo xtask bundle es1-plugin --release      # -> target/bundled/ES 1.vst3
+cargo test --workspace
+cargo run --release -p es1-render -- --all   # render every factory sound to target/render/*.wav
+cargo run --release -p es1-render -- --bench # worst-case CPU check
+cargo run -p es1-plugin --features standalone --bin es1-standalone   # standalone, for UI work
+```
+
+Copy `ES 1.vst3` to `C:\Program Files\Common Files\VST3`.
+
+| Crate | |
+|---|---|
+| `es1-dsp` | engine: oscillators, filters, envelopes, LFOs, voices, effects, parameter table |
+| `es1-presets` | `.sy1` / zip-bank reader and writer, embedded factory bank |
+| `es1-plugin` | nih-plug VST3 wrapper and the egui editor |
+| `es1-render` | offline renderer and benchmark |
+
+The factory patches in `presets/factory/` are Synth1's (© Daichi). Check that redistribution
+is allowed before you ship them.

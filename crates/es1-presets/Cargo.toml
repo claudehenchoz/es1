@@ -1,0 +1,10 @@
+[package]
+name = "es1-presets"
+description = "Synth1 .sy1 patch parser and ES 1 factory bank"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+es1-dsp.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }

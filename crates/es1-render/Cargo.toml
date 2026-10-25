@@ -1,0 +1,9 @@
+[package]
+name = "es1-render"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+es1-dsp.workspace = true
+es1-presets.workspace = true

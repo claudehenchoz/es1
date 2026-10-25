@@ -1,0 +1,4 @@
+/target
+*.wav
+/synth1-decomp
+/.claude/settings.local.json
