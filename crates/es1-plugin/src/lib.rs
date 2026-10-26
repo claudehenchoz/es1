@@ -7,15 +7,60 @@ use es1_dsp::params::NUM_SY1;
 use es1_dsp::Synth;
 use nih_plug::prelude::*;
 use params::Es1Params;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+/// Samples kept for the scope: about 85 ms at 48 kHz, enough for two periods of a low note.
+pub const SCOPE_LEN: usize = 4096;
+
+/// Lock-free ring of the most recent mono output, written by the audio thread and read by the
+/// editor's scope. A reader can see a partly overwritten ring; for a display that is harmless.
+pub struct Scope {
+    buf: Box<[AtomicU32]>,
+    pos: AtomicUsize,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self { buf: (0..SCOPE_LEN).map(|_| AtomicU32::new(0)).collect(), pos: AtomicUsize::new(0) }
+    }
+}
+
+impl Scope {
+    fn push(&self, l: &[f32], r: &[f32]) {
+        let mut p = self.pos.load(Ordering::Relaxed);
+        for (a, b) in l.iter().zip(r) {
+            self.buf[p % SCOPE_LEN].store((0.5 * (a + b)).to_bits(), Ordering::Relaxed);
+            p = p.wrapping_add(1);
+        }
+        self.pos.store(p, Ordering::Release);
+    }
+
+    /// Copy the newest `out.len()` samples, oldest first.
+    pub fn snapshot(&self, out: &mut [f32]) {
+        let end = self.pos.load(Ordering::Acquire);
+        let n = out.len().min(SCOPE_LEN);
+        for (i, o) in out[..n].iter_mut().enumerate() {
+            let at = end.wrapping_sub(n - i) % SCOPE_LEN;
+            *o = f32::from_bits(self.buf[at].load(Ordering::Relaxed));
+        }
+    }
+}
+
 /// State shared between the audio thread and the editor.
-#[derive(Default)]
 pub struct Shared {
     /// A new patch was loaded from the GUI: silence voices once its values arrive.
     pub patch_loaded: AtomicBool,
     pub active_voices: AtomicUsize,
+    pub scope: Scope,
+    /// Debug UI self-test only: a note to play (key number), or -1.
+    pub test_note: AtomicI32,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self { patch_loaded: AtomicBool::new(false), active_voices: AtomicUsize::new(0), scope: Scope::default(), test_note: AtomicI32::new(-1) }
+    }
 }
 
 pub struct Es1 {
@@ -114,6 +159,11 @@ impl Plugin for Es1 {
         if self.shared.patch_loaded.swap(false, Ordering::AcqRel) {
             self.synth.panic();
         }
+        let t = self.shared.test_note.swap(-1, Ordering::Relaxed);
+        if t >= 0 {
+            self.synth.all_notes_off();
+            self.synth.note_on(t as u8, 100);
+        }
 
         let n = buffer.samples();
         let out = buffer.as_slice();
@@ -131,6 +181,7 @@ impl Plugin for Es1 {
         if pos < n {
             self.synth.process(&mut l[pos..n], &mut r[pos..n]);
         }
+        self.shared.scope.push(l, r);
         self.shared.active_voices.store(self.synth.active_voices(), Ordering::Relaxed);
         ProcessStatus::KeepAlive
     }

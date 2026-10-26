@@ -9,21 +9,38 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub struct Palette {
-    /// Body colour behind the tiles.
+    /// Body colour behind the tiles (top of its gradient in `body_hi`).
     pub body: Color32,
-    /// Section tile face.
+    pub body_hi: Color32,
+    /// Section tile face; the face is lit from above, from `tile_hi` down to `tile`.
     pub tile: Color32,
+    pub tile_hi: Color32,
+    /// Hairline highlight along the top edge of raised parts.
+    pub sheen: Color32,
+    /// Cast shadow under raised parts.
+    pub shadow: Color32,
+    /// Fader and slider slot.
+    pub groove: Color32,
+    /// Brushed top plate carrying the header.
+    pub plate_hi: Color32,
+    pub plate_lo: Color32,
+    pub plate_edge: Color32,
     pub tile_edge: Color32,
     pub rule: Color32,
     pub ink: Color32,
     pub ink_soft: Color32,
-    pub knob: Color32,
+    /// Knob skirt gradient (lit top, shaded bottom); the dished cap reverses it.
+    pub knob_hi: Color32,
+    pub knob_lo: Color32,
     pub knob_edge: Color32,
     pub knob_line: Color32,
-    /// Primary (cutoff, volume) knob: inverted cap.
-    pub knob_main: Color32,
+    /// Primary (cutoff, volume) knob: inverted cap, from `main_hi` to `main_lo`.
     pub knob_main_line: Color32,
+    pub main_hi: Color32,
+    pub main_lo: Color32,
     pub key: Color32,
+    pub key_hi: Color32,
+    pub key_lo: Color32,
     pub key_edge: Color32,
     /// Selected segment: filled with ink, glyph in `key_sel_fg`.
     pub key_sel: Color32,
@@ -36,18 +53,30 @@ pub struct Palette {
 }
 
 pub static LIGHT: Palette = Palette {
-    body: Color32::from_rgb(0xDF, 0xDC, 0xD5),
-    tile: Color32::from_rgb(0xEC, 0xE9, 0xE3),
+    body: Color32::from_rgb(0xD6, 0xD3, 0xCC),
+    body_hi: Color32::from_rgb(0xDE, 0xDB, 0xD4),
+    tile: Color32::from_rgb(0xE9, 0xE6, 0xE0),
+    tile_hi: Color32::from_rgb(0xF0, 0xEE, 0xE9),
+    sheen: Color32::from_rgba_premultiplied(0xC0, 0xC0, 0xC0, 0xC0),
+    shadow: Color32::from_rgba_premultiplied(0x30, 0x2A, 0x20, 0x30),
+    groove: Color32::from_rgb(0xC4, 0xC0, 0xB7),
+    plate_hi: Color32::from_rgb(0xF1, 0xF0, 0xEC),
+    plate_lo: Color32::from_rgb(0xD2, 0xD0, 0xCA),
+    plate_edge: Color32::from_rgb(0x9C, 0x98, 0x90),
     tile_edge: Color32::from_rgb(0xD2, 0xCE, 0xC6),
     rule: Color32::from_rgb(0xBD, 0xB8, 0xAE),
     ink: Color32::from_rgb(0x26, 0x25, 0x23),
     ink_soft: Color32::from_rgb(0x74, 0x70, 0x69),
-    knob: Color32::from_rgb(0xF9, 0xF7, 0xF2),
-    knob_edge: Color32::from_rgb(0xA9, 0xA4, 0x9A),
+    knob_hi: Color32::from_rgb(0xFF, 0xFE, 0xFB),
+    knob_lo: Color32::from_rgb(0xD9, 0xD5, 0xCC),
+    knob_edge: Color32::from_rgb(0xAE, 0xA9, 0x9F),
     knob_line: Color32::from_rgb(0x26, 0x25, 0x23),
-    knob_main: Color32::from_rgb(0x2E, 0x2D, 0x2B),
     knob_main_line: Color32::from_rgb(0xF3, 0xF0, 0xE9),
+    main_hi: Color32::from_rgb(0x4A, 0x48, 0x45),
+    main_lo: Color32::from_rgb(0x1C, 0x1B, 0x1A),
     key: Color32::from_rgb(0xF6, 0xF4, 0xEF),
+    key_hi: Color32::from_rgb(0xFC, 0xFB, 0xF8),
+    key_lo: Color32::from_rgb(0xEB, 0xE8, 0xE2),
     key_edge: Color32::from_rgb(0xB8, 0xB3, 0xA9),
     key_sel: Color32::from_rgb(0x2E, 0x2D, 0x2B),
     key_sel_fg: Color32::from_rgb(0xF6, 0xF4, 0xEF),
@@ -59,19 +88,31 @@ pub static LIGHT: Palette = Palette {
 };
 
 pub static DARK: Palette = Palette {
-    body: Color32::from_rgb(0x16, 0x16, 0x15),
-    tile: Color32::from_rgb(0x22, 0x22, 0x20),
+    body: Color32::from_rgb(0x12, 0x12, 0x11),
+    body_hi: Color32::from_rgb(0x1A, 0x1A, 0x19),
+    tile: Color32::from_rgb(0x20, 0x20, 0x1E),
+    tile_hi: Color32::from_rgb(0x27, 0x27, 0x25),
+    sheen: Color32::from_rgba_premultiplied(0x16, 0x16, 0x16, 0x16),
+    shadow: Color32::from_rgba_premultiplied(0x00, 0x00, 0x00, 0x80),
+    groove: Color32::from_rgb(0x0E, 0x0E, 0x0D),
+    plate_hi: Color32::from_rgb(0x30, 0x30, 0x2E),
+    plate_lo: Color32::from_rgb(0x1D, 0x1D, 0x1C),
+    plate_edge: Color32::from_rgb(0x03, 0x03, 0x03),
     tile_edge: Color32::from_rgb(0x2E, 0x2E, 0x2B),
     rule: Color32::from_rgb(0x45, 0x44, 0x40),
     ink: Color32::from_rgb(0xEC, 0xE9, 0xE2),
     ink_soft: Color32::from_rgb(0x8E, 0x8A, 0x83),
-    knob: Color32::from_rgb(0x3A, 0x39, 0x36),
-    knob_edge: Color32::from_rgb(0x52, 0x51, 0x4C),
+    knob_hi: Color32::from_rgb(0x4C, 0x4B, 0x47),
+    knob_lo: Color32::from_rgb(0x2A, 0x29, 0x27),
+    knob_edge: Color32::from_rgb(0x12, 0x12, 0x11),
     knob_line: Color32::from_rgb(0xEC, 0xE9, 0xE2),
-    knob_main: Color32::from_rgb(0xDD, 0xD9, 0xD0),
     knob_main_line: Color32::from_rgb(0x22, 0x22, 0x20),
+    main_hi: Color32::from_rgb(0xF4, 0xF1, 0xEA),
+    main_lo: Color32::from_rgb(0xBF, 0xBB, 0xB2),
     key: Color32::from_rgb(0x2C, 0x2C, 0x29),
-    key_edge: Color32::from_rgb(0x4A, 0x49, 0x45),
+    key_hi: Color32::from_rgb(0x35, 0x35, 0x32),
+    key_lo: Color32::from_rgb(0x29, 0x29, 0x26),
+    key_edge: Color32::from_rgb(0x11, 0x11, 0x10),
     key_sel: Color32::from_rgb(0xE6, 0xE2, 0xDA),
     key_sel_fg: Color32::from_rgb(0x1E, 0x1E, 0x1C),
     orange: Color32::from_rgb(0xEE, 0x67, 0x22),

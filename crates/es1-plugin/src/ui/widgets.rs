@@ -4,6 +4,7 @@
 //! displays; a *cell* is 56 × 56 px and holds a knob, stepper or display with its label. Labels
 //! sit on one baseline at the bottom of their cell. Faders span both lines.
 
+use super::paint::*;
 use super::theme::*;
 use nih_plug::prelude::{BoolParam, IntParam, Param, ParamSetter};
 use nih_plug_egui::egui::{
@@ -58,43 +59,57 @@ fn drag_normalized<P: Param>(ui: &Ui, resp: &Response, p: &P, setter: &ParamSett
     }
 }
 
-fn arc(p: &Painter, c: Pos2, r: f32, a0: f32, a1: f32, stroke: Stroke) {
-    let n = 40;
-    let pts: Vec<Pos2> = (0..=n)
-        .map(|i| {
-            let a = a0 + (a1 - a0) * i as f32 / n as f32;
-            c + vec2(a.sin(), -a.cos()) * r
-        })
-        .collect();
-    p.add(Shape::line(pts, stroke));
-}
-
 fn cell_label(ui: &Ui, rect: Rect, text: &str, active: bool) {
     let pl = pal();
     let (font, color) = if active { (value_font(), pl.orange) } else { (label_font(), pl.ink) };
     ui.painter().text(pos2(rect.center().x, rect.bottom() - 7.0), Align2::CENTER_CENTER, text, font, color);
 }
 
-/// Round knob in a cell. `main` = inverted cap for primary controls; `bipolar` marks centre;
-/// `shown` overrides the value text (e.g. note values for a tempo-synced rate).
+/// Round knob in a cell. `main` = inverted cap for primary controls; `bipolar` fills the scale
+/// from the centre; `shown` overrides the value text (e.g. note values for a tempo-synced rate).
+///
+/// Drawn like a Braun rotary: a lit skirt with a dished cap, a dot scale whose dots light up to
+/// the current value, and a single index line.
 pub fn knob<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, label: &str, main: bool, bipolar: bool, shown: Option<String>) -> Response {
     let pl = pal();
     let (rect, resp) = ui.allocate_exact_size(vec2(CELL_W, CELL_H), Sense::click_and_drag());
     drag_normalized(ui, &resp, p, setter, 150.0, false);
-    let painter = ui.painter_at(rect.expand(4.0));
-    let r = if main { 16.5 } else { 13.5 };
+    let painter = ui.painter_at(rect.expand(6.0));
+    let r = if main { 16.0 } else { 13.0 };
     let c = pos2(rect.center().x, rect.top() + 20.0);
-    arc(&painter, c, r + 4.0, -ARC * 0.5, ARC * 0.5, Stroke::new(1.0, pl.rule));
-    if bipolar {
-        painter.line_segment([c - vec2(0.0, r + 2.0), c - vec2(0.0, r + 6.5)], Stroke::new(1.0, pl.ink_soft));
-    }
-    let (cap, line) = if main { (pl.knob_main, pl.knob_main_line) } else { (pl.knob, pl.knob_line) };
-    painter.circle(c, r, cap, Stroke::new(1.0, pl.knob_edge));
-    let a = -ARC * 0.5 + ARC * p.modulated_normalized_value();
-    let dir = vec2(a.sin(), -a.cos());
-    let line = if resp.dragged() { pl.orange } else { line };
-    painter.line_segment([c + dir * (r * 0.3), c + dir * (r - 2.5)], Stroke::new(2.0, line));
+    let v = p.modulated_normalized_value();
     let active = resp.dragged() || resp.hovered();
+
+    // Dot scale: 11 positions, lit from the origin (left end, or centre if bipolar) to the value.
+    let (lo, hi) = if bipolar { (v.min(0.5), v.max(0.5)) } else { (0.0, v) };
+    for k in 0..=10 {
+        let t = k as f32 / 10.0;
+        let a = -ARC * 0.5 + ARC * t;
+        let lit = t >= lo - 0.05 && t <= hi + 0.05;
+        let major = k == 0 || k == 10 || (bipolar && k == 5);
+        let col = if lit {
+            if resp.dragged() {
+                pl.orange
+            } else {
+                pl.ink
+            }
+        } else {
+            pl.rule
+        };
+        painter.circle_filled(c + vec2(a.sin(), -a.cos()) * (r + 5.5), if major { 1.35 } else { 1.0 }, col);
+    }
+
+    let (hi_c, lo_c, line) = if main { (pl.main_hi, pl.main_lo, pl.knob_main_line) } else { (pl.knob_hi, pl.knob_lo, pl.knob_line) };
+    shadow(&painter, Rect::from_center_size(c, vec2(2.0 * r, 2.0 * r)), r, 2, 6);
+    gradient_circle(&painter, c, r, hi_c, lo_c);
+    gradient_circle(&painter, c, r - 2.5, mix(lo_c, hi_c, 0.35), mix(hi_c, lo_c, 0.08));
+    painter.circle_stroke(c, r - 2.5, Stroke::new(0.8, mix(lo_c, hi_c, 0.2).gamma_multiply(0.8)));
+    painter.circle_stroke(c, r, Stroke::new(1.0, if active { pl.ink_soft } else { pl.knob_edge }));
+
+    let a = -ARC * 0.5 + ARC * v;
+    let dir = vec2(a.sin(), -a.cos());
+    let line = if resp.dragged() || main { pl.orange } else { line };
+    painter.line_segment([c + dir * (r * 0.28), c + dir * (r - 2.0)], Stroke::new(2.0, line));
     let value = shown.unwrap_or_else(|| p.to_string());
     cell_label(ui, rect, &if active { value } else { label.to_string() }, active);
     resp.on_hover_text(p.name())
@@ -104,24 +119,28 @@ pub fn knob<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, label: &str, mai
 pub fn fader<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, label: &str) -> Response {
     let pl = pal();
     let (rect, resp) = ui.allocate_exact_size(vec2(FADER_W, BODY_H), Sense::click_and_drag());
-    let top = rect.top() + 6.0;
-    let bot = rect.bottom() - 21.0;
+    let top = rect.top() + 7.0;
+    let bot = rect.bottom() - 22.0;
     drag_normalized(ui, &resp, p, setter, bot - top, false);
-    let painter = ui.painter_at(rect.expand(2.0));
+    let painter = ui.painter_at(rect.expand(4.0));
     let x = rect.center().x;
-    for t in [0.0, 0.5, 1.0] {
-        let y = bot - (bot - top) * t;
-        painter.line_segment([pos2(x - 11.0, y), pos2(x - 7.0, y)], Stroke::new(1.0, pl.rule));
+    for k in 0..=10 {
+        let y = bot - (bot - top) * k as f32 / 10.0;
+        let len = if k % 5 == 0 { 5.0 } else { 3.0 };
+        painter.line_segment([pos2(x - 8.0 - len, y), pos2(x - 8.0, y)], Stroke::new(1.0, pl.rule));
     }
-    painter.rect_filled(Rect::from_min_max(pos2(x - 1.5, top), pos2(x + 1.5, bot)), CornerRadius::same(1), pl.rule);
+    groove(&painter, Rect::from_min_max(pos2(x - 2.0, top - 2.0), pos2(x + 2.0, bot + 2.0)));
     let y = bot - (bot - top) * p.modulated_normalized_value();
-    let cap = Rect::from_center_size(pos2(x, y), vec2(20.0, 10.0));
-    painter.rect(cap, CornerRadius::same(2), pl.knob, Stroke::new(1.0, pl.knob_edge), StrokeKind::Inside);
+    let cap = Rect::from_center_size(pos2(x, y), vec2(22.0, 13.0));
+    let active = resp.dragged() || resp.hovered();
+    shadow(&painter, cap, 2.5, 2, 5);
+    gradient_rrect(&painter, cap, 2.5, pl.knob_hi, pl.knob_lo);
+    painter.rect_stroke(cap, CornerRadius::same(2), Stroke::new(1.0, if active { pl.ink_soft } else { pl.knob_edge }), StrokeKind::Inside);
+    sheen(&painter, cap, 2.5);
     painter.line_segment(
-        [pos2(cap.left() + 4.0, y), pos2(cap.right() - 4.0, y)],
+        [pos2(cap.left() + 3.5, y), pos2(cap.right() - 3.5, y)],
         Stroke::new(1.5, if resp.dragged() { pl.orange } else { pl.knob_line }),
     );
-    let active = resp.dragged() || resp.hovered();
     cell_label(ui, rect, &if active { p.to_string() } else { label.to_string() }, active);
     resp.on_hover_text(p.name())
 }
@@ -139,15 +158,19 @@ pub fn hslider<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, w: f32, left:
     let y = rect.center().y;
     painter.text(pos2(rect.left(), y), Align2::LEFT_CENTER, left, small_font(), pl.ink_soft);
     painter.text(pos2(rect.right(), y), Align2::RIGHT_CENTER, right, small_font(), pl.ink_soft);
-    painter.rect_filled(Rect::from_min_max(pos2(x0, y - 1.5), pos2(x1, y + 1.5)), CornerRadius::same(1), pl.rule);
+    groove(&painter, Rect::from_min_max(pos2(x0 - 2.0, y - 2.0), pos2(x1 + 2.0, y + 2.0)));
     if center {
         let xc = 0.5 * (x0 + x1);
         painter.line_segment([pos2(xc, y - 8.0), pos2(xc, y - 4.0)], Stroke::new(1.0, pl.ink_soft));
         painter.line_segment([pos2(xc, y + 4.0), pos2(xc, y + 8.0)], Stroke::new(1.0, pl.ink_soft));
     }
     let x = x0 + (x1 - x0) * p.modulated_normalized_value();
-    let cap = Rect::from_center_size(pos2(x, y), vec2(10.0, 18.0));
-    painter.rect(cap, CornerRadius::same(2), pl.knob, Stroke::new(1.0, pl.knob_edge), StrokeKind::Inside);
+    let cap = Rect::from_center_size(pos2(x, y), vec2(11.0, 18.0));
+    shadow(&painter, cap, 2.5, 2, 4);
+    gradient_rrect(&painter, cap, 2.5, pl.knob_hi, pl.knob_lo);
+    let edge = if resp.dragged() || resp.hovered() { pl.ink_soft } else { pl.knob_edge };
+    painter.rect_stroke(cap, CornerRadius::same(2), Stroke::new(1.0, edge), StrokeKind::Inside);
+    sheen(&painter, cap, 2.5);
     painter.line_segment(
         [pos2(x, cap.top() + 4.0), pos2(x, cap.bottom() - 4.0)],
         Stroke::new(1.5, if resp.dragged() { pl.orange } else { pl.knob_line }),
@@ -223,7 +246,7 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
     let widths: Vec<f32> = items.iter().map(|s| seg_width(ui, s)).collect();
     let total: f32 = widths.iter().sum::<f32>() + cap_w;
     let (rect, resp) = ui.allocate_exact_size(vec2(total, LINE_H), Sense::click());
-    let painter = ui.painter_at(rect.expand(1.0));
+    let painter = ui.painter_at(rect.expand(4.0));
     if let Some(c) = caption {
         painter.text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, c, small_font(), pl.ink_soft);
     }
@@ -235,7 +258,8 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
         cells.push(Rect::from_min_size(pos2(x, keys.top()), vec2(*w, LINE_H)));
         x += w;
     }
-    painter.rect(keys, CornerRadius::same(3), pl.key, Stroke::NONE, StrokeKind::Inside);
+    shadow(&painter, keys, 3.0, 1, 3);
+    gradient_rrect(&painter, keys, 3.0, pl.key_hi, pl.key_lo);
     for (i, (cell, item)) in cells.iter().zip(items).enumerate() {
         let sel = i as i32 == cur;
         if sel {
@@ -246,6 +270,11 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
                 se: if i + 1 == items.len() { 3 } else { 0 },
             };
             painter.rect_filled(*cell, cr, pl.key_sel);
+            // Pressed in: a shade along the top inner edge.
+            painter.line_segment(
+                [pos2(cell.left() + 1.0, cell.top() + 1.5), pos2(cell.right() - 1.0, cell.top() + 1.5)],
+                Stroke::new(1.0, Color32::from_black_alpha(if is_dark() { 40 } else { 90 })),
+            );
         } else if i > 0 && i as i32 != cur + 1 {
             painter.line_segment([pos2(cell.left(), cell.top() + 5.0), pos2(cell.left(), cell.bottom() - 5.0)], Stroke::new(1.0, pl.key_edge));
         }
@@ -291,10 +320,13 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
 fn lamp(painter: &Painter, c: Pos2, on: bool) {
     let pl = pal();
     if on {
-        painter.circle_filled(c, 5.5, pl.green.gamma_multiply(0.22));
+        painter.circle_filled(c, 7.0, pl.green.gamma_multiply(0.10));
+        painter.circle_filled(c, 5.0, pl.green.gamma_multiply(0.22));
         painter.circle_filled(c, 3.2, pl.green);
+        painter.circle_filled(c + vec2(-0.9, -0.9), 1.1, white(150));
     } else {
-        painter.circle_stroke(c, 3.0, Stroke::new(1.2, pl.ink_soft));
+        painter.circle_filled(c, 3.2, pl.groove);
+        painter.circle_stroke(c, 3.2, Stroke::new(1.0, pl.ink_soft.gamma_multiply(0.7)));
     }
 }
 
@@ -309,9 +341,9 @@ pub fn toggle(ui: &mut Ui, p: &BoolParam, setter: &ParamSetter, text: &str) -> R
         setter.set_parameter(p, !on);
         setter.end_set_parameter(p);
     }
-    let painter = ui.painter_at(rect.expand(1.0));
+    let painter = ui.painter_at(rect.expand(4.0));
     let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
-    painter.rect(rect, CornerRadius::same(3), pl.key, Stroke::new(1.0, edge), StrokeKind::Inside);
+    raised(&painter, rect, 3.0, edge);
     lamp(&painter, pos2(rect.left() + 11.0, rect.center().y), on);
     painter.text(pos2(rect.left() + 21.0, rect.center().y), Align2::LEFT_CENTER, text, label_font(), pl.ink);
     resp.on_hover_text(p.name())
@@ -327,9 +359,9 @@ pub fn power(ui: &mut Ui, p: &BoolParam, setter: &ParamSetter, rect: Rect) -> Re
         setter.set_parameter(p, !on);
         setter.end_set_parameter(p);
     }
-    let painter = ui.painter_at(rect.expand(1.0));
+    let painter = ui.painter_at(rect.expand(4.0));
     let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
-    painter.rect(rect, CornerRadius::same(3), pl.key, Stroke::new(1.0, edge), StrokeKind::Inside);
+    raised(&painter, rect, 3.0, edge);
     lamp(&painter, pos2(rect.left() + 10.0, rect.center().y), on);
     painter.text(pos2(rect.left() + 19.0, rect.center().y), Align2::LEFT_CENTER, if on { "on" } else { "off" }, small_font(), pl.ink);
     resp.on_hover_text(p.name())
@@ -383,7 +415,7 @@ pub fn stepper(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: &str, w: 
         setter.end_set_parameter(p);
     }
     let painter = ui.painter_at(rect.expand(1.0));
-    painter.rect(bx, CornerRadius::same(3), pl.display_bg, Stroke::NONE, StrokeKind::Inside);
+    glass(&painter, bx, 3.0);
     painter.text(pos2(bx.left() + 8.0, bx.center().y), Align2::CENTER_CENTER, "‹", label_font(), pl.display_dim);
     painter.text(pos2(bx.right() - 8.0, bx.center().y), Align2::CENTER_CENTER, "›", label_font(), pl.display_dim);
     let active = resp.dragged();
@@ -416,7 +448,10 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
     }
     let painter = ui.painter_at(rect.expand(1.0));
     let open = ui.memory(|m| m.is_popup_open(popup_id));
-    painter.rect(bx, CornerRadius::same(3), pl.display_bg, Stroke::new(1.0, if open { pl.orange } else { pl.display_bg }), StrokeKind::Inside);
+    glass(&painter, bx, 3.0);
+    if open {
+        painter.rect_stroke(bx, CornerRadius::same(3), Stroke::new(1.0, pl.orange), StrokeKind::Inside);
+    }
     let text = items.get(pos).map(|(_, s)| s.as_str()).unwrap_or("");
     painter.text(pos2(bx.left() + 7.0, bx.center().y), Align2::LEFT_CENTER, text, label_font(), pl.display_fg);
     let a = pos2(bx.right() - 9.0, bx.center().y + 2.0);
@@ -458,10 +493,11 @@ pub fn choice_pair(ui: &mut Ui, a: &str, b: &str, second: bool) -> Option<bool> 
     let wa = text_width(ui, a, small_font()) + 14.0;
     let wb = text_width(ui, b, small_font()) + 14.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(wa + wb, 18.0), Sense::click());
-    let painter = ui.painter_at(rect.expand(1.0));
+    let painter = ui.painter_at(rect.expand(4.0));
     let ra = Rect::from_min_size(rect.min, vec2(wa, 18.0));
     let rb = Rect::from_min_size(pos2(rect.left() + wa, rect.top()), vec2(wb, 18.0));
-    painter.rect(rect, CornerRadius::same(3), pl.key, Stroke::NONE, StrokeKind::Inside);
+    shadow(&painter, rect, 3.0, 1, 3);
+    gradient_rrect(&painter, rect, 3.0, pl.key_hi, pl.key_lo);
     let (sel, other) = if second { (rb, ra) } else { (ra, rb) };
     let cr = if second { CornerRadius { ne: 3, se: 3, nw: 0, sw: 0 } } else { CornerRadius { nw: 3, sw: 3, ne: 0, se: 0 } };
     painter.rect_filled(sel, cr, pl.key_sel);

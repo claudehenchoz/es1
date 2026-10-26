@@ -6,6 +6,8 @@
 //! power key at the right), a *line* of keys/sliders and a *cell row* of knobs, steppers and
 //! displays whose labels all share one baseline. Envelopes are faders spanning both.
 
+mod paint;
+mod scope;
 mod theme;
 mod widgets;
 
@@ -19,12 +21,15 @@ use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use paint::*;
 use theme::*;
 use widgets::*;
 
 const MARGIN: f32 = 16.0;
 const GAP: f32 = 8.0;
 const ROW_GAP: f32 = 10.0;
+/// From the header to the first row; the top plate ends half-way.
+const HEADER_GAP: f32 = 22.0;
 const HEADER_H: f32 = 64.0;
 const TILE_PAD: f32 = 12.0;
 const TILE_HEAD: f32 = 30.0;
@@ -33,7 +38,7 @@ const CONTENT_W: f32 = 1104.0;
 const ROWS: usize = 5;
 
 pub const WIDTH: u32 = (CONTENT_W + 2.0 * MARGIN) as u32;
-pub const HEIGHT: u32 = (2.0 * MARGIN + HEADER_H + ROW_GAP + ROWS as f32 * TILE_H + (ROWS - 1) as f32 * ROW_GAP) as u32;
+pub const HEIGHT: u32 = (2.0 * MARGIN + HEADER_H + HEADER_GAP + ROWS as f32 * TILE_H + (ROWS - 1) as f32 * ROW_GAP) as u32;
 
 /// Preset change animation length.
 const TWEEN_S: f32 = 0.22;
@@ -52,6 +57,7 @@ struct UiState {
     bank_sel: usize,
     message: Option<String>,
     tween: Option<Tween>,
+    scope: scope::ScopeView,
 }
 
 fn all_banks(params: &Es1Params) -> Vec<Bank> {
@@ -75,6 +81,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             bank_sel: 0,
             message: None,
             tween: None,
+            scope: scope::ScopeView::default(),
         },
         move |ctx, st| {
             load_settings();
@@ -90,12 +97,12 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             egui::CentralPanel::default().frame(egui::Frame::new().fill(pal().body)).show(ctx, |ui| {
                 let cx = Cx { p: &params, s: setter };
                 let full = ui.max_rect();
+                gradient_rrect(ui.painter(), full, 0.0, pal().body_hi, pal().body);
                 let origin = full.min + vec2(MARGIN, MARGIN);
                 let header = Rect::from_min_size(origin, vec2(CONTENT_W, HEADER_H));
-                ui.scope_builder(UiBuilder::new().max_rect(header).layout(Layout::left_to_right(Align::Center)), |ui| {
-                    header_bar(ui, &cx, &shared, st, ctx)
-                });
-                let body_top = header.bottom() + ROW_GAP;
+                brushed_plate(ui.painter(), Rect::from_min_max(full.min, pos2(full.right(), header.bottom() + HEADER_GAP * 0.5)));
+                ui.scope_builder(UiBuilder::new().max_rect(header), |ui| header_bar(ui, &cx, &shared, st, ctx));
+                let body_top = header.bottom() + HEADER_GAP;
                 if st.browser {
                     let r = Rect::from_min_max(pos2(origin.x, body_top), pos2(origin.x + CONTENT_W, full.bottom() - MARGIN));
                     browser(ui, &cx, &shared, st, r);
@@ -126,6 +133,14 @@ fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut 
                 step_program(&cx, shared, st, 82);
             }
             "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
+            // `note[:program]`: optionally select a factory program, then hold A3 for the scope.
+            m if m.starts_with("note") => {
+                if let Some(n) = m.strip_prefix("note:").and_then(|n| n.parse::<i32>().ok()) {
+                    let cx = Cx { p: params, s: setter };
+                    step_program(&cx, shared, st, n);
+                }
+                shared.test_note.store(57, Ordering::Relaxed);
+            }
             _ => {}
         }
     }
@@ -264,6 +279,15 @@ const GRID: [&[TileSpec]; ROWS] = [
     &[(T::Effect, "effect", Some(77), 192.0), (T::Eq, "equalizer", None, 254.0), (T::Delay, "delay", Some(65), 322.0), (T::Chorus, "chorus / flanger", Some(66), 310.0)],
 ];
 
+/// A section plate: lifted off the body by a soft shadow, lit from above.
+fn tile_face(painter: &egui::Painter, r: Rect) {
+    let pl = pal();
+    shadow(painter, r, 5.0, 2, 8);
+    gradient_rrect(painter, r, 5.0, pl.tile_hi, pl.tile);
+    painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, pl.tile_edge), StrokeKind::Inside);
+    sheen(painter, r, 5.0);
+}
+
 fn panel(ui: &mut Ui, cx: &Cx, origin: egui::Pos2) {
     let pl = pal();
     let mut y = origin.y;
@@ -275,7 +299,7 @@ fn panel(ui: &mut Ui, cx: &Cx, origin: egui::Pos2) {
         for &(t, title, power_sy1, w) in row {
             let w = w + extra;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, TILE_H));
-            ui.painter().rect(r, CornerRadius::same(4), pl.tile, Stroke::new(1.0, pl.tile_edge), StrokeKind::Inside);
+            tile_face(ui.painter(), r);
             ui.painter().text(pos2(r.left() + TILE_PAD, r.top() + 16.0), Align2::LEFT_CENTER, title, heading_font(), pl.ink);
             if let Some(sy1) = power_sy1 {
                 let pr = Rect::from_min_size(pos2(r.right() - TILE_PAD - 44.0, r.top() + 7.0), vec2(44.0, 18.0));
@@ -633,57 +657,79 @@ fn key(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
     let pl = pal();
     let (r, resp) = ui.allocate_exact_size(vec2(w, LINE_H), Sense::click());
     let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
-    ui.painter().rect(r, CornerRadius::same(3), pl.key, Stroke::new(1.0, edge), StrokeKind::Inside);
-    ui.painter().text(r.center(), Align2::CENTER_CENTER, text, label_font(), pl.ink);
+    let painter = ui.painter_at(r.expand(4.0));
+    if resp.is_pointer_button_down_on() {
+        painter.rect(r, CornerRadius::same(3), pl.key_lo, Stroke::new(1.0, edge), StrokeKind::Inside);
+    } else {
+        raised(&painter, r, 3.0, edge);
+    }
+    painter.text(r.center(), Align2::CENTER_CENTER, text, label_font(), pl.ink);
     resp
 }
 
+/// Header display: program on the left, the output scope on the right, behind one glass.
+const DISPLAY_X: f32 = 156.0;
+const DISPLAY_W: f32 = 520.0;
+const PROGRAM_W: f32 = 300.0;
+
 fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egui::Context) {
     let pl = pal();
+    let h = ui.max_rect();
+    let mid = h.center().y;
+
     // Wordmark.
-    let (r, _) = ui.allocate_exact_size(vec2(176.0, HEADER_H), Sense::hover());
-    let p = ui.painter_at(r);
-    p.text(pos2(r.left(), r.center().y - 8.0), Align2::LEFT_CENTER, "ES 1", title_font(), pl.ink);
-    p.text(pos2(r.left(), r.center().y + 14.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
+    let p = ui.painter();
+    p.text(pos2(h.left(), mid - 8.0), Align2::LEFT_CENTER, "ES 1", title_font(), pl.ink);
+    p.text(pos2(h.left() + 1.0, mid + 14.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
 
     // Display.
-    let (r, _) = ui.allocate_exact_size(vec2(392.0, 52.0), Sense::hover());
-    let p = ui.painter_at(r);
-    p.rect(r, CornerRadius::same(4), pl.display_bg, Stroke::NONE, StrokeKind::Inside);
-    let (name, bank, prog) = {
+    let d = Rect::from_min_size(pos2(h.left() + DISPLAY_X, mid - 26.0), vec2(DISPLAY_W, 52.0));
+    glass(ui.painter(), d, 5.0);
+    let prog = Rect::from_min_size(d.min, vec2(PROGRAM_W, d.height()));
+    let p = ui.painter_at(prog.shrink(2.0));
+    let (name, bank, num) = {
         let s = cx.p.patch.read();
         (s.name.clone(), s.bank, s.program)
     };
-    let num = if prog == NO_PROGRAM { "---".to_string() } else { format!("{:03}", prog + 1) };
-    p.text(pos2(r.left() + 14.0, r.top() + 19.0), Align2::LEFT_CENTER, num, value_font(), pl.orange);
-    p.text(pos2(r.left() + 48.0, r.top() + 19.0), Align2::LEFT_CENTER, &name, egui::FontId::proportional(17.0), pl.display_fg);
+    let num = if num == NO_PROGRAM { "---".to_string() } else { format!("{:03}", num + 1) };
+    p.text(pos2(prog.left() + 14.0, prog.top() + 20.0), Align2::LEFT_CENTER, num, value_font(), pl.orange);
+    p.text(pos2(prog.left() + 48.0, prog.top() + 20.0), Align2::LEFT_CENTER, &name, egui::FontId::proportional(17.0), pl.display_fg);
     let bank_name = st.banks.get(bank).map(|b| b.name.to_lowercase()).unwrap_or_default();
     let info = st.message.clone().unwrap_or(bank_name);
-    p.text(pos2(r.left() + 48.0, r.bottom() - 12.0), Align2::LEFT_CENTER, info, small_font(), pl.display_dim);
+    p.text(pos2(prog.left() + 48.0, prog.bottom() - 12.0), Align2::LEFT_CENTER, info, small_font(), pl.display_dim);
     let voices = shared.active_voices.load(Ordering::Relaxed);
-    p.text(pos2(r.right() - 14.0, r.bottom() - 12.0), Align2::RIGHT_CENTER, format!("{voices} voices"), small_font(), pl.display_dim);
+    let vtext = if voices == 1 { "1 voice".to_string() } else { format!("{voices} voices") };
+    p.text(pos2(prog.right() - 14.0, prog.bottom() - 12.0), Align2::RIGHT_CENTER, vtext, small_font(), pl.display_dim);
+    let div = prog.right();
+    ui.painter().line_segment([pos2(div, d.top() + 9.0), pos2(div, d.bottom() - 9.0)], Stroke::new(1.0, pl.display_dim.gamma_multiply(0.35)));
+    let scope_r = Rect::from_min_max(pos2(div + 12.0, d.top() + 7.0), pos2(d.right() - 12.0, d.bottom() - 7.0));
+    st.scope.draw(ui, &ui.painter_at(scope_r.expand(2.0)), scope_r, shared);
 
-    ui.add_space(12.0);
-    ui.spacing_mut().item_spacing.x = 4.0;
-    if key(ui, "‹", 28.0).on_hover_text("previous program").clicked() {
-        step_program(cx, shared, st, -1);
-    }
-    if key(ui, "›", 28.0).on_hover_text("next program").clicked() {
-        step_program(cx, shared, st, 1);
-    }
-    ui.add_space(8.0);
-    if key(ui, if st.browser { "panel" } else { "programs" }, 76.0).clicked() {
-        st.browser = !st.browser;
-    }
-    if key(ui, "import", 56.0).on_hover_text("Load a Synth1 .sy1 file or .zip bank").clicked() {
-        import(cx.p, st);
-    }
-    if key(ui, "save", 48.0).on_hover_text("Save the current sound as a .sy1 file").clicked() {
-        save(cx.p, st);
-    }
+    // Program keys.
+    let keys = Rect::from_min_size(pos2(d.right() + 16.0, mid - LINE_H * 0.5), vec2(280.0, LINE_H));
+    put(ui, keys, 4.0, |ui| {
+        if key(ui, "‹", 28.0).on_hover_text("previous program").clicked() {
+            step_program(cx, shared, st, -1);
+        }
+        if key(ui, "›", 28.0).on_hover_text("next program").clicked() {
+            step_program(cx, shared, st, 1);
+        }
+        ui.add_space(6.0);
+        if key(ui, if st.browser { "panel" } else { "programs" }, 76.0).clicked() {
+            st.browser = !st.browser;
+        }
+        if key(ui, "import", 56.0).on_hover_text("Load a Synth1 .sy1 file or .zip bank").clicked() {
+            import(cx.p, st);
+        }
+        if key(ui, "save", 48.0).on_hover_text("Save the current sound as a .sy1 file").clicked() {
+            save(cx.p, st);
+        }
+    });
 
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
+    // Theme and master volume, right-aligned.
+    let right = Rect::from_min_max(pos2(h.right() - 180.0, h.top()), h.max);
+    ui.scope_builder(UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
         knob(ui, &cx.p.master, cx.s, "volume", true, false, None);
         if let Some(dark) = choice_pair(ui, "light", "dark", is_dark()) {
             if dark != is_dark() {
@@ -704,7 +750,7 @@ fn browser(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, area: Rect) 
     let banks_r = Rect::from_min_size(area.min, vec2(232.0, area.height()));
     let progs_r = Rect::from_min_max(pos2(banks_r.right() + GAP, area.top()), area.max);
     for r in [banks_r, progs_r] {
-        ui.painter().rect(r, CornerRadius::same(4), pl.tile, Stroke::new(1.0, pl.tile_edge), StrokeKind::Inside);
+        tile_face(ui.painter(), r);
     }
     ui.painter().text(pos2(banks_r.left() + TILE_PAD, banks_r.top() + 16.0), Align2::LEFT_CENTER, "banks", heading_font(), pl.ink);
     ui.painter().text(pos2(progs_r.left() + TILE_PAD, progs_r.top() + 16.0), Align2::LEFT_CENTER, "programs", heading_font(), pl.ink);
