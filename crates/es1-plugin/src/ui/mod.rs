@@ -1,29 +1,57 @@
-//! ES 1 editor. "Weniger, aber besser": a warm grey panel, dark legends, one orange accent,
-//! controls on an 8 px grid, grouped exactly by function.
+//! ES 1 editor. "Weniger, aber besser".
+//!
+//! The panel is a fixed grid of tiles in five rows that follow the signal flow:
+//! sources → shaping → modulation → voice → effects. Every row spans the full width, so tile
+//! edges line up and the gutters are equal. Inside a tile there is a heading (with the section
+//! power key at the right), a *line* of keys/sliders and a *cell row* of knobs, steppers and
+//! displays whose labels all share one baseline. Envelopes are faders spanning both.
 
 mod theme;
 mod widgets;
 
 use crate::params::{Es1Params, HostParam, StoredBank, NO_PROGRAM};
 use crate::Shared;
-use es1_dsp::params::Kind;
+use es1_dsp::params::{Kind, PARAMS};
 use es1_presets::{factory_bank, load_path, parse_sy1, write_sy1, Bank, Sy1Patch};
 use nih_plug::prelude::*;
-use nih_plug_egui::egui::{self, pos2, vec2, Align2, CornerRadius, RichText, Sense, Stroke, StrokeKind};
+use nih_plug_egui::egui::{self, pos2, vec2, Align, Align2, CornerRadius, Layout, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder};
 use nih_plug_egui::{create_egui_editor, EguiState};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 use theme::*;
 use widgets::*;
 
-pub const WIDTH: u32 = 1232;
-pub const HEIGHT: u32 = 744;
+const MARGIN: f32 = 16.0;
+const GAP: f32 = 8.0;
+const ROW_GAP: f32 = 10.0;
+const HEADER_H: f32 = 64.0;
+const TILE_PAD: f32 = 12.0;
+const TILE_HEAD: f32 = 30.0;
+const TILE_H: f32 = TILE_HEAD + BODY_H + 10.0;
+const CONTENT_W: f32 = 1104.0;
+const ROWS: usize = 5;
+
+pub const WIDTH: u32 = (CONTENT_W + 2.0 * MARGIN) as u32;
+pub const HEIGHT: u32 = (2.0 * MARGIN + HEADER_H + ROW_GAP + ROWS as f32 * TILE_H + (ROWS - 1) as f32 * ROW_GAP) as u32;
+
+/// Preset change animation length.
+const TWEEN_S: f32 = 0.22;
+
+struct Tween {
+    start: Instant,
+    /// (index into `Es1Params::list`, from, to): normalized values of continuous parameters.
+    items: Vec<(usize, f32, f32)>,
+}
 
 struct UiState {
+    #[cfg(debug_assertions)]
+    started: Option<Instant>,
     banks: Vec<Bank>,
     browser: bool,
     bank_sel: usize,
     message: Option<String>,
+    tween: Option<Tween>,
 }
 
 fn all_banks(params: &Es1Params) -> Vec<Bank> {
@@ -39,47 +67,494 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
     let p2 = params.clone();
     create_egui_editor(
         state,
-        UiState { banks: Vec::new(), browser: false, bank_sel: 0, message: None },
+        UiState {
+            #[cfg(debug_assertions)]
+            started: None,
+            banks: Vec::new(),
+            browser: false,
+            bank_sel: 0,
+            message: None,
+            tween: None,
+        },
         move |ctx, st| {
-            theme::apply(ctx);
+            load_settings();
+            install_fonts(ctx);
+            apply(ctx);
             st.banks = all_banks(&p2);
             st.bank_sel = p2.patch.read().bank.min(st.banks.len().saturating_sub(1));
         },
         move |ctx, setter, st| {
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(PANEL).inner_margin(2.0 * U)).show(ctx, |ui| {
-                header(ui, &params, &shared, setter, st);
-                ui.add_space(U);
+            #[cfg(debug_assertions)]
+            selftest(&params, &shared, setter, st, ctx);
+            run_tween(&params, setter, st, ctx);
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(pal().body)).show(ctx, |ui| {
+                let cx = Cx { p: &params, s: setter };
+                let full = ui.max_rect();
+                let origin = full.min + vec2(MARGIN, MARGIN);
+                let header = Rect::from_min_size(origin, vec2(CONTENT_W, HEADER_H));
+                ui.scope_builder(UiBuilder::new().max_rect(header).layout(Layout::left_to_right(Align::Center)), |ui| {
+                    header_bar(ui, &cx, &shared, st, ctx)
+                });
+                let body_top = header.bottom() + ROW_GAP;
                 if st.browser {
-                    browser(ui, &params, &shared, setter, st);
+                    let r = Rect::from_min_max(pos2(origin.x, body_top), pos2(origin.x + CONTENT_W, full.bottom() - MARGIN));
+                    browser(ui, &cx, &shared, st, r);
                 } else {
-                    panel(ui, &params, setter);
+                    panel(ui, &cx, pos2(origin.x, body_top));
                 }
             });
         },
     )
 }
 
-// ---------------------------------------------------------------------------------------------
-// Patch handling
-// ---------------------------------------------------------------------------------------------
-
-fn load_patch(params: &Es1Params, shared: &Shared, setter: &ParamSetter, patch: &Sy1Patch, bank: usize, program: usize) {
-    let v = patch.to_values();
-    for (hp, def) in params.list.iter().zip(es1_dsp::PARAMS) {
-        let norm = hp.normalized_for(def, v[def.sy1 as usize]);
-        macro_rules! set {
-            ($p:expr) => {{
-                setter.begin_set_parameter($p);
-                setter.set_parameter_normalized($p, norm);
-                setter.end_set_parameter($p);
-            }};
-        }
-        match hp {
-            HostParam::F(p) => set!(p),
-            HostParam::I(p) => set!(p),
-            HostParam::B(p) => set!(p),
+/// Debug builds only: `ES1_UI_SELFTEST=step` steps to the next program 1.5 s after opening, so
+/// the preset tween can be captured; `=popup` opens the LFO 1 destination list.
+#[cfg(debug_assertions)]
+fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
+    let Ok(mode) = std::env::var("ES1_UI_SELFTEST") else { return };
+    let t0 = *st.started.get_or_insert_with(Instant::now);
+    let el = t0.elapsed().as_secs_f32();
+    if el < 1.5 {
+        ctx.request_repaint();
+        return;
+    }
+    if st.started.is_some() && el < 10.0 {
+        st.started = Some(t0 - std::time::Duration::from_secs(100));
+        match mode.as_str() {
+            "step" => {
+                let cx = Cx { p: params, s: setter };
+                step_program(&cx, shared, st, 82);
+            }
+            "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
+            _ => {}
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Parameter access helpers
+// ---------------------------------------------------------------------------------------------
+
+struct Cx<'a> {
+    p: &'a Es1Params,
+    s: &'a ParamSetter<'a>,
+}
+
+impl Cx<'_> {
+    fn f(&self, sy1: usize) -> &FloatParam {
+        match self.p.get(sy1).0 {
+            HostParam::F(p) => p,
+            _ => panic!("sy1 {sy1} is not continuous"),
+        }
+    }
+    fn i(&self, sy1: usize) -> &IntParam {
+        match self.p.get(sy1).0 {
+            HostParam::I(p) => p,
+            _ => panic!("sy1 {sy1} is not an int/choice"),
+        }
+    }
+    fn b(&self, sy1: usize) -> &BoolParam {
+        match self.p.get(sy1).0 {
+            HostParam::B(p) => p,
+            _ => panic!("sy1 {sy1} is not a switch"),
+        }
+    }
+    fn knob(&self, ui: &mut Ui, sy1: usize, label: &str) {
+        knob(ui, self.f(sy1), self.s, label, false, false, None);
+    }
+    fn bip(&self, ui: &mut Ui, sy1: usize, label: &str) {
+        knob(ui, self.f(sy1), self.s, label, false, true, None);
+    }
+    fn fader(&self, ui: &mut Ui, sy1: usize, label: &str) {
+        fader(ui, self.f(sy1), self.s, label);
+    }
+    fn toggle(&self, ui: &mut Ui, sy1: usize, text: &str) {
+        toggle(ui, self.b(sy1), self.s, text);
+    }
+    fn stepper(&self, ui: &mut Ui, sy1: usize, label: &str) {
+        stepper(ui, self.i(sy1), self.s, label, 64.0);
+    }
+    fn hslider(&self, ui: &mut Ui, sy1: usize, w: f32, l: &str, r: &str) {
+        hslider(ui, self.f(sy1), self.s, w, l, r, true);
+    }
+    fn base(&self, sy1: usize) -> i32 {
+        let def = self.p.get(sy1).1;
+        if matches!(def.kind, Kind::Choice { .. }) {
+            0
+        } else {
+            def.min
+        }
+    }
+    fn icons(&self, ui: &mut Ui, sy1: usize) {
+        let Kind::Choice { labels, .. } = self.p.get(sy1).1.kind else { return };
+        let segs: Vec<Seg> = labels.iter().map(|l| Seg::Icon(l)).collect();
+        segmented(ui, self.i(sy1), self.s, &segs, 0, None);
+    }
+    fn seg(&self, ui: &mut Ui, sy1: usize, labels: &[&str], caption: Option<&str>) {
+        let segs: Vec<Seg> = labels.iter().map(|l| Seg::Text(l)).collect();
+        segmented(ui, self.i(sy1), self.s, &segs, self.base(sy1), caption);
+    }
+    fn choice_items(&self, sy1: usize) -> Vec<(i32, String)> {
+        match self.p.get(sy1).1.kind {
+            Kind::Choice { labels, .. } => labels.iter().enumerate().map(|(i, l)| (i as i32, l.to_string())).collect(),
+            _ => Vec::new(),
+        }
+    }
+    fn drop_cell(&self, ui: &mut Ui, sy1: usize, label: &str, w: f32) {
+        dropdown(ui, self.i(sy1), self.s, Some(label), &self.choice_items(sy1), w);
+    }
+    fn drop_line(&self, ui: &mut Ui, sy1: usize, w: f32) {
+        dropdown(ui, self.i(sy1), self.s, None, &self.choice_items(sy1), w);
+    }
+    fn int(&self, sy1: usize) -> i32 {
+        self.i(sy1).value()
+    }
+}
+
+/// Run `f` in a left-to-right layout confined to `r`, vertically centred.
+fn put(ui: &mut Ui, r: Rect, spacing: f32, f: impl FnOnce(&mut Ui)) {
+    ui.scope_builder(UiBuilder::new().max_rect(r).layout(Layout::left_to_right(Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing.x = spacing;
+        f(ui)
+    });
+}
+
+/// Like [`put`] but top-aligned (for controls spanning the whole tile body).
+fn put_top(ui: &mut Ui, r: Rect, spacing: f32, f: impl FnOnce(&mut Ui)) {
+    ui.scope_builder(UiBuilder::new().max_rect(r).layout(Layout::left_to_right(Align::Min)), |ui| {
+        ui.spacing_mut().item_spacing.x = spacing;
+        f(ui)
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Panel grid
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum T {
+    Osc1,
+    Sub,
+    Osc2,
+    Mix,
+    ModEnv,
+    Filter,
+    FilterEnv,
+    Amp,
+    Lfo1,
+    Lfo2,
+    Arp,
+    Voice,
+    Unison,
+    Control,
+    Effect,
+    Eq,
+    Delay,
+    Chorus,
+}
+
+/// (tile, title, power switch sy1, minimum width)
+type TileSpec = (T, &'static str, Option<usize>, f32);
+
+const GRID: [&[TileSpec]; ROWS] = [
+    &[(T::Osc1, "oscillator 1", None, 150.0), (T::Sub, "sub oscillator", None, 200.0), (T::Osc2, "oscillator 2", None, 330.0), (T::Mix, "mix", None, 270.0)],
+    &[(T::ModEnv, "mod envelope", Some(10), 200.0), (T::Filter, "filter", None, 330.0), (T::FilterEnv, "filter envelope", None, 180.0), (T::Amp, "amplifier", None, 290.0)],
+    &[(T::Lfo1, "lfo 1", Some(57), 310.0), (T::Lfo2, "lfo 2", Some(58), 310.0), (T::Arp, "arpeggiator", Some(59), 320.0)],
+    &[(T::Voice, "voice", None, 240.0), (T::Unison, "unison", Some(73), 280.0), (T::Control, "controllers", None, 400.0)],
+    &[(T::Effect, "effect", Some(77), 192.0), (T::Eq, "equalizer", None, 254.0), (T::Delay, "delay", Some(65), 322.0), (T::Chorus, "chorus / flanger", Some(66), 310.0)],
+];
+
+fn panel(ui: &mut Ui, cx: &Cx, origin: egui::Pos2) {
+    let pl = pal();
+    let mut y = origin.y;
+    for row in GRID {
+        let n = row.len() as f32;
+        let min: f32 = row.iter().map(|t| t.3).sum();
+        let extra = ((CONTENT_W - GAP * (n - 1.0) - min) / n).max(0.0);
+        let mut x = origin.x;
+        for &(t, title, power_sy1, w) in row {
+            let w = w + extra;
+            let r = Rect::from_min_size(pos2(x, y), vec2(w, TILE_H));
+            ui.painter().rect(r, CornerRadius::same(4), pl.tile, Stroke::new(1.0, pl.tile_edge), StrokeKind::Inside);
+            ui.painter().text(pos2(r.left() + TILE_PAD, r.top() + 16.0), Align2::LEFT_CENTER, title, heading_font(), pl.ink);
+            if let Some(sy1) = power_sy1 {
+                let pr = Rect::from_min_size(pos2(r.right() - TILE_PAD - 44.0, r.top() + 7.0), vec2(44.0, 18.0));
+                power(ui, cx.b(sy1), cx.s, pr);
+            }
+            let l1 = Rect::from_min_size(pos2(r.left() + TILE_PAD, r.top() + TILE_HEAD), vec2(w - 2.0 * TILE_PAD, LINE_H));
+            let l2 = Rect::from_min_size(pos2(l1.left(), l1.bottom() + LINE_GAP), vec2(l1.width(), CELL_H));
+            tile(ui, cx, t, l1, l2);
+            x += w + GAP;
+        }
+        y += TILE_H + ROW_GAP;
+    }
+}
+
+/// Effect block knob legends follow the selected effect type.
+fn effect_labels(kind: i32) -> [&'static str; 3] {
+    match kind {
+        0..=2 => ["drive", "tone", "level"],
+        3 => ["rate", "bits", "mix"],
+        4 => ["freq", "-", "mix"],
+        5 => ["thresh", "time", "gain"],
+        _ => ["range", "rate", "feedback"],
+    }
+}
+
+fn tile(ui: &mut Ui, cx: &Cx, t: T, l1: Rect, l2: Rect) {
+    let body = l1.union(l2);
+    match t {
+        T::Osc1 => {
+            put(ui, l1, 8.0, |ui| cx.icons(ui, 0));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 76, "detune");
+                cx.knob(ui, 45, "fm");
+            });
+        }
+        T::Sub => {
+            put(ui, l1, 10.0, |ui| {
+                cx.icons(ui, 96);
+                cx.seg(ui, 97, &["0", "-1"], Some("oct"));
+            });
+            put(ui, l2, 0.0, |ui| cx.knob(ui, 95, "level"));
+        }
+        T::Osc2 => {
+            put(ui, l1, 6.0, |ui| {
+                cx.icons(ui, 1);
+                ui.add_space(6.0);
+                cx.toggle(ui, 6, "sync");
+                cx.toggle(ui, 7, "ring");
+                cx.toggle(ui, 4, "key track");
+            });
+            put(ui, l2, 0.0, |ui| {
+                cx.bip(ui, 2, "pitch");
+                cx.bip(ui, 3, "fine");
+            });
+        }
+        T::Mix => {
+            put(ui, l1, 0.0, |ui| cx.hslider(ui, 5, 200.0, "osc 1", "osc 2"));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 8, "p/w");
+                cx.knob(ui, 91, "phase");
+                cx.bip(ui, 72, "tune");
+                cx.stepper(ui, 9, "transpose");
+            });
+        }
+        T::ModEnv => {
+            put(ui, l1, 0.0, |ui| cx.seg(ui, 71, &["osc 2", "fm", "p/w"], Some("to")));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 12, "attack");
+                cx.knob(ui, 13, "decay");
+                cx.bip(ui, 11, "amount");
+            });
+        }
+        T::Filter => {
+            put(ui, l1, 10.0, |ui| {
+                cx.seg(ui, 14, &["lp 12", "lp 24", "hp 12", "bp 12", "lp dl"], None);
+                cx.toggle(ui, 24, "velocity");
+            });
+            put(ui, l2, 0.0, |ui| {
+                knob(ui, cx.f(19), cx.s, "cutoff", true, false, None);
+                cx.knob(ui, 20, "resonance");
+                cx.bip(ui, 21, "envelope");
+                cx.knob(ui, 22, "key track");
+                cx.knob(ui, 23, "drive");
+            });
+        }
+        T::FilterEnv => {
+            put_top(ui, body, 4.0, |ui| {
+                cx.fader(ui, 15, "a");
+                cx.fader(ui, 16, "d");
+                cx.fader(ui, 17, "s");
+                cx.fader(ui, 18, "r");
+            });
+        }
+        T::Amp => {
+            put_top(ui, body, 4.0, |ui| {
+                cx.fader(ui, 25, "a");
+                cx.fader(ui, 26, "d");
+                cx.fader(ui, 27, "s");
+                cx.fader(ui, 28, "r");
+                ui.add_space(12.0);
+                cx.fader(ui, 29, "gain");
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.add_space(LINE_H + LINE_GAP);
+                    cx.knob(ui, 30, "velocity");
+                });
+            });
+        }
+        T::Lfo1 | T::Lfo2 => {
+            let (wave, dest, speed, depth, sync, key) = if matches!(t, T::Lfo1) { (42, 41, 43, 44, 67, 68) } else { (47, 46, 48, 49, 69, 70) };
+            put(ui, l1, 6.0, |ui| {
+                cx.icons(ui, wave);
+                ui.add_space(6.0);
+                cx.toggle(ui, sync, "tempo");
+                cx.toggle(ui, key, "key sync");
+            });
+            put(ui, l2, 0.0, |ui| {
+                cx.drop_cell(ui, dest, "to", 92.0);
+                let synced = cx.b(sync).value();
+                let shown = synced.then(|| es1_dsp::lfo::sync_label(cx.f(speed).value()));
+                knob(ui, cx.f(speed), cx.s, "speed", false, false, shown);
+                cx.knob(ui, depth, "depth");
+            });
+        }
+        T::Arp => {
+            put(ui, l1, 10.0, |ui| {
+                cx.seg(ui, 31, &["up/down", "up", "down", "random"], None);
+                cx.seg(ui, 32, &["1", "2", "3", "4"], Some("oct"));
+            });
+            put(ui, l2, 0.0, |ui| {
+                cx.drop_cell(ui, 33, "beat", 80.0);
+                cx.knob(ui, 34, "gate");
+            });
+        }
+        T::Voice => {
+            put(ui, l1, 10.0, |ui| {
+                cx.seg(ui, 38, &["poly", "mono", "legato"], None);
+                cx.toggle(ui, 74, "auto glide");
+            });
+            put(ui, l2, 0.0, |ui| {
+                cx.stepper(ui, 94, "polyphony");
+                cx.knob(ui, 39, "glide");
+                cx.stepper(ui, 40, "bend");
+            });
+        }
+        T::Unison => {
+            put(ui, l1, 0.0, |ui| cx.seg(ui, 93, &["2", "3", "4", "5", "6", "7", "8"], Some("voices")));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 75, "detune");
+                cx.knob(ui, 92, "phase");
+                cx.bip(ui, 84, "spread");
+                cx.stepper(ui, 85, "pitch");
+            });
+        }
+        T::Control => {
+            let targets: Vec<(i32, String)> = std::iter::once((-1, "none".to_string()))
+                .chain(PARAMS.iter().filter(|d| d.modulatable).map(|d| (d.sy1 as i32, d.name.to_lowercase())))
+                .collect();
+            let slot2 = Rect::from_min_size(pos2(l2.left(), l2.top() + 4.0), vec2(l2.width(), LINE_H));
+            for (r, src, dst, amt, n) in [(l1, 86, 87, 50, "1"), (slot2, 88, 89, 51, "2")] {
+                put(ui, r, 6.0, |ui| {
+                    ui.label(RichText::new(n).font(small_font()).color(pal().ink_soft));
+                    cx.drop_line(ui, src, 100.0);
+                    ui.label(RichText::new("→").font(label_font()).color(pal().ink_soft));
+                    dropdown(ui, cx.i(dst), cx.s, None, &targets, 132.0);
+                    hslider(ui, cx.f(amt), cx.s, 96.0, "-", "+", true);
+                });
+            }
+            ui.painter().text(
+                pos2(l2.left(), l2.bottom() - 7.0),
+                Align2::LEFT_CENTER,
+                "midi source → parameter, with amount",
+                small_font(),
+                pal().ink_soft,
+            );
+        }
+        T::Effect => {
+            put(ui, l1, 0.0, |ui| cx.drop_line(ui, 78, 120.0));
+            let [a, b, c] = effect_labels(cx.int(78));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 79, a);
+                cx.knob(ui, 80, b);
+                cx.knob(ui, 81, c);
+            });
+        }
+        T::Eq => {
+            put(ui, l1, 14.0, |ui| {
+                cx.hslider(ui, 60, 112.0, "lp", "hp");
+                cx.hslider(ui, 90, 104.0, "L", "R");
+            });
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 61, "freq");
+                cx.bip(ui, 62, "gain");
+                cx.knob(ui, 63, "q");
+            });
+        }
+        T::Delay => {
+            put(ui, l1, 0.0, |ui| cx.seg(ui, 82, &["stereo", "cross", "ping-pong"], None));
+            put(ui, l2, 0.0, |ui| {
+                cx.drop_cell(ui, 35, "time", 72.0);
+                cx.bip(ui, 83, "spread");
+                cx.knob(ui, 36, "feedback");
+                cx.bip(ui, 98, "tone");
+                cx.knob(ui, 37, "mix");
+            });
+        }
+        T::Chorus => {
+            put(ui, l1, 0.0, |ui| cx.seg(ui, 64, &["1", "2", "3", "4"], Some("mode")));
+            put(ui, l2, 0.0, |ui| {
+                cx.knob(ui, 52, "time");
+                cx.knob(ui, 53, "depth");
+                cx.knob(ui, 54, "rate");
+                cx.bip(ui, 55, "feedback");
+                cx.knob(ui, 56, "level");
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Patch handling and the preset tween
+// ---------------------------------------------------------------------------------------------
+
+fn finish_tween(params: &Es1Params, setter: &ParamSetter, st: &mut UiState) {
+    if let Some(tw) = st.tween.take() {
+        for (i, _, to) in tw.items {
+            if let HostParam::F(p) = &params.list[i] {
+                setter.set_parameter_normalized(p, to);
+                setter.end_set_parameter(p);
+            }
+        }
+    }
+}
+
+fn run_tween(params: &Es1Params, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
+    let Some(tw) = &st.tween else { return };
+    let t = (tw.start.elapsed().as_secs_f32() / TWEEN_S).min(1.0);
+    if t >= 1.0 {
+        finish_tween(params, setter, st);
+        return;
+    }
+    // Ease-out cubic: quick departure, soft landing.
+    let e = 1.0 - (1.0 - t).powi(3);
+    for &(i, from, to) in &tw.items {
+        if let HostParam::F(p) = &params.list[i] {
+            setter.set_parameter_normalized(p, from + (to - from) * e);
+        }
+    }
+    ctx.request_repaint();
+}
+
+/// Load a patch: discrete values switch at once, continuous ones glide over `TWEEN_S`.
+fn load_patch(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, patch: &Sy1Patch, bank: usize, program: usize) {
+    finish_tween(params, setter, st);
+    let v = patch.to_values();
+    let mut items = Vec::new();
+    for (i, (hp, def)) in params.list.iter().zip(PARAMS).enumerate() {
+        let norm = hp.normalized_for(def, v[def.sy1 as usize]);
+        match hp {
+            HostParam::F(p) => {
+                let from = p.unmodulated_normalized_value();
+                if (from - norm).abs() > 1e-6 {
+                    setter.begin_set_parameter(p);
+                    items.push((i, from, norm));
+                }
+            }
+            HostParam::I(p) => {
+                setter.begin_set_parameter(p);
+                setter.set_parameter_normalized(p, norm);
+                setter.end_set_parameter(p);
+            }
+            HostParam::B(p) => {
+                setter.begin_set_parameter(p);
+                setter.set_parameter_normalized(p, norm);
+                setter.end_set_parameter(p);
+            }
+        }
+    }
+    st.tween = Some(Tween { start: Instant::now(), items });
     {
         let mut s = params.patch.write();
         s.name = patch.name.clone();
@@ -98,18 +573,26 @@ fn current_values(params: &Es1Params) -> es1_dsp::Values {
     v
 }
 
-fn step_program(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, delta: i32) {
+fn step_program(cx: &Cx, shared: &Shared, st: &mut UiState, delta: i32) {
     let (b, p) = {
-        let s = params.patch.read();
+        let s = cx.p.patch.read();
         (s.bank.min(st.banks.len() - 1), s.program)
     };
     let n = st.banks[b].patches.len();
     if n == 0 {
         return;
     }
-    let p = if p == NO_PROGRAM { if delta > 0 { 0 } else { n - 1 } } else { ((p as i32 + delta).rem_euclid(n as i32)) as usize };
+    let p = if p == NO_PROGRAM {
+        if delta > 0 {
+            0
+        } else {
+            n - 1
+        }
+    } else {
+        ((p as i32 + delta).rem_euclid(n as i32)) as usize
+    };
     let patch = st.banks[b].patches[p].clone();
-    load_patch(params, shared, setter, &patch, b, p);
+    load_patch(cx.p, shared, cx.s, st, &patch, b, p);
 }
 
 fn import(params: &Es1Params, st: &mut UiState) {
@@ -143,227 +626,157 @@ fn save(params: &Es1Params, st: &mut UiState) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Header: wordmark, display, master
+// Header: wordmark, display, transport keys, theme, master volume
 // ---------------------------------------------------------------------------------------------
 
-fn header(ui: &mut egui::Ui, params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState) {
-    ui.horizontal(|ui| {
-        // Wordmark.
-        let (r, _) = ui.allocate_exact_size(vec2(18.0 * U, 7.0 * U), Sense::hover());
-        let p = ui.painter_at(r);
-        p.text(pos2(r.left(), r.top() + 2.5 * U), Align2::LEFT_CENTER, "ES 1", title_font(), INK);
-        p.text(pos2(r.left(), r.top() + 5.0 * U), Align2::LEFT_CENTER, "elektronischer synthesizer", label_font(), INK_SOFT);
+fn key(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
+    let pl = pal();
+    let (r, resp) = ui.allocate_exact_size(vec2(w, LINE_H), Sense::click());
+    let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
+    ui.painter().rect(r, CornerRadius::same(3), pl.key, Stroke::new(1.0, edge), StrokeKind::Inside);
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, text, label_font(), pl.ink);
+    resp
+}
 
-        // Display.
-        let (r, _) = ui.allocate_exact_size(vec2(44.0 * U, 7.0 * U), Sense::hover());
-        let p = ui.painter_at(r);
-        p.rect(r, CornerRadius::same(3), DISPLAY_BG, Stroke::new(1.0, KNOB_EDGE), StrokeKind::Inside);
-        let (name, bank, prog) = {
-            let s = params.patch.read();
-            (s.name.clone(), s.bank, s.program)
-        };
-        let bank_name = st.banks.get(bank).map(|b| b.name.as_str()).unwrap_or("");
-        let num = if prog == NO_PROGRAM { "---".to_string() } else { format!("{:03}", prog + 1) };
-        p.text(pos2(r.left() + 2.0 * U, r.top() + 2.5 * U), Align2::LEFT_CENTER, num, value_font(), ORANGE);
-        p.text(pos2(r.left() + 6.0 * U, r.top() + 2.5 * U), Align2::LEFT_CENTER, &name, egui::FontId::proportional(16.0), DISPLAY_FG);
-        let info = st.message.clone().unwrap_or_else(|| bank_name.to_lowercase());
-        p.text(pos2(r.left() + 2.0 * U, r.bottom() - 1.75 * U), Align2::LEFT_CENTER, info, label_font(), RULE);
-        let voices = shared.active_voices.load(Ordering::Relaxed);
-        p.text(pos2(r.right() - 2.0 * U, r.bottom() - 1.75 * U), Align2::RIGHT_CENTER, format!("{voices} v"), value_font(), RULE);
+fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egui::Context) {
+    let pl = pal();
+    // Wordmark.
+    let (r, _) = ui.allocate_exact_size(vec2(176.0, HEADER_H), Sense::hover());
+    let p = ui.painter_at(r);
+    p.text(pos2(r.left(), r.center().y - 8.0), Align2::LEFT_CENTER, "ES 1", title_font(), pl.ink);
+    p.text(pos2(r.left(), r.center().y + 14.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
 
-        ui.add_space(U);
-        ui.vertical(|ui| {
-            ui.horizontal(|ui| {
-                if ui.button("◀").clicked() {
-                    step_program(params, shared, setter, st, -1);
-                }
-                if ui.button("▶").clicked() {
-                    step_program(params, shared, setter, st, 1);
-                }
-                let label = if st.browser { "panel" } else { "browse" };
-                if ui.button(label).clicked() {
-                    st.browser = !st.browser;
-                }
-            });
-            ui.horizontal(|ui| {
-                if ui.button("import").on_hover_text("Load a Synth1 .sy1 file or .zip bank").clicked() {
-                    import(params, st);
-                }
-                if ui.button("save").on_hover_text("Save the current sound as a .sy1 file").clicked() {
-                    save(params, st);
-                }
-            });
-        });
+    // Display.
+    let (r, _) = ui.allocate_exact_size(vec2(392.0, 52.0), Sense::hover());
+    let p = ui.painter_at(r);
+    p.rect(r, CornerRadius::same(4), pl.display_bg, Stroke::NONE, StrokeKind::Inside);
+    let (name, bank, prog) = {
+        let s = cx.p.patch.read();
+        (s.name.clone(), s.bank, s.program)
+    };
+    let num = if prog == NO_PROGRAM { "---".to_string() } else { format!("{:03}", prog + 1) };
+    p.text(pos2(r.left() + 14.0, r.top() + 19.0), Align2::LEFT_CENTER, num, value_font(), pl.orange);
+    p.text(pos2(r.left() + 48.0, r.top() + 19.0), Align2::LEFT_CENTER, &name, egui::FontId::proportional(17.0), pl.display_fg);
+    let bank_name = st.banks.get(bank).map(|b| b.name.to_lowercase()).unwrap_or_default();
+    let info = st.message.clone().unwrap_or(bank_name);
+    p.text(pos2(r.left() + 48.0, r.bottom() - 12.0), Align2::LEFT_CENTER, info, small_font(), pl.display_dim);
+    let voices = shared.active_voices.load(Ordering::Relaxed);
+    p.text(pos2(r.right() - 14.0, r.bottom() - 12.0), Align2::RIGHT_CENTER, format!("{voices} voices"), small_font(), pl.display_dim);
 
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            knob(ui, &params.master, setter, "volume", true);
-        });
+    ui.add_space(12.0);
+    ui.spacing_mut().item_spacing.x = 4.0;
+    if key(ui, "‹", 28.0).on_hover_text("previous program").clicked() {
+        step_program(cx, shared, st, -1);
+    }
+    if key(ui, "›", 28.0).on_hover_text("next program").clicked() {
+        step_program(cx, shared, st, 1);
+    }
+    ui.add_space(8.0);
+    if key(ui, if st.browser { "panel" } else { "programs" }, 76.0).clicked() {
+        st.browser = !st.browser;
+    }
+    if key(ui, "import", 56.0).on_hover_text("Load a Synth1 .sy1 file or .zip bank").clicked() {
+        import(cx.p, st);
+    }
+    if key(ui, "save", 48.0).on_hover_text("Save the current sound as a .sy1 file").clicked() {
+        save(cx.p, st);
+    }
+
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        knob(ui, &cx.p.master, cx.s, "volume", true, false, None);
+        if let Some(dark) = choice_pair(ui, "light", "dark", is_dark()) {
+            if dark != is_dark() {
+                set_dark(ctx, dark);
+            }
+        }
     });
 }
 
 // ---------------------------------------------------------------------------------------------
-// Browser
+// Program browser
 // ---------------------------------------------------------------------------------------------
 
 const COLS: usize = 5;
 
-fn browser(ui: &mut egui::Ui, params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState) {
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(24.0 * U);
-            section(ui, "banks");
-            let mut remove = None;
-            for (i, b) in st.banks.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    let sel = i == st.bank_sel;
-                    let t = RichText::new(format!("{}  ({})", b.name, b.patches.len())).color(if sel { INK } else { INK_SOFT });
-                    if ui.selectable_label(sel, t).clicked() {
-                        st.bank_sel = i;
-                    }
-                    if i > 0 && ui.small_button("×").on_hover_text("remove bank").clicked() {
-                        remove = Some(i);
-                    }
-                });
-            }
-            if let Some(i) = remove {
-                st.banks.remove(i);
-                params.banks.write().remove(i - 1);
-                st.bank_sel = st.bank_sel.min(st.banks.len() - 1);
-            }
-        });
-        ui.add_space(2.0 * U);
-        ui.vertical(|ui| {
-            section(ui, "programs");
-            let b = st.bank_sel.min(st.banks.len() - 1);
-            let cur = {
-                let s = params.patch.read();
-                (s.bank == b).then_some(s.program)
-            };
-            let mut clicked = None;
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                egui::Grid::new("programs").num_columns(COLS).spacing(vec2(2.0 * U, 0.25 * U)).show(ui, |ui| {
-                    let n = st.banks[b].patches.len();
-                    let rows = n.div_ceil(COLS);
-                    for r in 0..rows {
-                        for c in 0..COLS {
-                            let i = c * rows + r;
-                            if let Some(p) = st.banks[b].patches.get(i) {
-                                let sel = cur == Some(i);
-                                let t = RichText::new(format!("{:03}  {}", i + 1, p.name)).size(11.0).color(if sel { ORANGE } else { INK });
-                                if ui.add(egui::Label::new(t).sense(Sense::click())).clicked() {
-                                    clicked = Some(i);
-                                }
-                            } else {
-                                ui.label("");
-                            }
-                        }
-                        ui.end_row();
-                    }
-                });
-            });
-            if let Some(i) = clicked {
-                let patch = st.banks[b].patches[i].clone();
-                load_patch(params, shared, setter, &patch, b, i);
-                st.message = None;
-            }
-        });
-    });
-}
-
-// ---------------------------------------------------------------------------------------------
-// Main panel
-// ---------------------------------------------------------------------------------------------
-
-/// One control for a sy1 parameter, chosen by its kind.
-fn ctl(ui: &mut egui::Ui, params: &Es1Params, setter: &ParamSetter, sy1: usize, label: &str) {
-    let (hp, def) = params.get(sy1);
-    match hp {
-        HostParam::F(p) => {
-            knob(ui, p, setter, label, sy1 == 19);
-        }
-        HostParam::B(p) => {
-            switch(ui, p, setter, label);
-        }
-        HostParam::I(p) => match def.kind {
-            Kind::Choice { labels, .. } if labels.len() <= 7 => {
-                selector(ui, p, setter, label, labels);
-            }
-            _ => {
-                knob(ui, p, setter, label, false);
-            }
-        },
+fn browser(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, area: Rect) {
+    let pl = pal();
+    let banks_r = Rect::from_min_size(area.min, vec2(232.0, area.height()));
+    let progs_r = Rect::from_min_max(pos2(banks_r.right() + GAP, area.top()), area.max);
+    for r in [banks_r, progs_r] {
+        ui.painter().rect(r, CornerRadius::same(4), pl.tile, Stroke::new(1.0, pl.tile_edge), StrokeKind::Inside);
     }
-}
+    ui.painter().text(pos2(banks_r.left() + TILE_PAD, banks_r.top() + 16.0), Align2::LEFT_CENTER, "banks", heading_font(), pl.ink);
+    ui.painter().text(pos2(progs_r.left() + TILE_PAD, progs_r.top() + 16.0), Align2::LEFT_CENTER, "programs", heading_font(), pl.ink);
 
-fn group(ui: &mut egui::Ui, params: &Es1Params, setter: &ParamSetter, title: &str, items: &[(usize, &str)]) {
-    egui::Frame::new().inner_margin(egui::Margin::symmetric(U as i8, (U * 0.5) as i8)).show(ui, |ui| {
-        ui.vertical(|ui| {
-            let resp = ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for &(sy1, label) in items {
-                    ctl(ui, params, setter, sy1, label);
+    let inner = |r: Rect| Rect::from_min_max(pos2(r.left() + TILE_PAD, r.top() + TILE_HEAD + 4.0), pos2(r.right() - TILE_PAD, r.bottom() - TILE_PAD));
+    let mut remove = None;
+    ui.scope_builder(UiBuilder::new().max_rect(inner(banks_r)).layout(Layout::top_down(Align::Min)), |ui| {
+        for (i, b) in st.banks.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let sel = i == st.bank_sel;
+                let (cell, resp) = ui.allocate_exact_size(vec2(180.0, 22.0), Sense::click());
+                if sel {
+                    ui.painter().rect_filled(cell, CornerRadius::same(3), pl.key_sel);
+                } else if resp.hovered() {
+                    ui.painter().rect_filled(cell, CornerRadius::same(3), pl.key);
+                }
+                let col = if sel { pl.key_sel_fg } else { pl.ink };
+                ui.painter().text(pos2(cell.left() + 8.0, cell.center().y), Align2::LEFT_CENTER, b.name.to_lowercase(), label_font(), col);
+                ui.painter().text(pos2(cell.right() - 8.0, cell.center().y), Align2::RIGHT_CENTER, b.patches.len().to_string(), small_font(), col);
+                if resp.clicked() {
+                    st.bank_sel = i;
+                }
+                if i > 0 && key(ui, "×", 22.0).on_hover_text("remove bank").clicked() {
+                    remove = Some(i);
                 }
             });
-            let w = resp.response.rect.width();
-            // Header drawn above the row, as wide as its controls.
-            let top = resp.response.rect.top();
-            let p = ui.painter();
-            let g = p.layout_no_wrap(title.to_lowercase(), section_font(), INK);
-            let y = top - 1.25 * U;
-            let x0 = resp.response.rect.left();
-            let tw = g.size().x;
-            p.galley(pos2(x0, y - g.size().y * 0.5), g, INK);
-            p.line_segment([pos2(x0 + tw + U, y), pos2(x0 + w, y)], Stroke::new(1.0, RULE));
+        }
+    });
+    if let Some(i) = remove {
+        st.banks.remove(i);
+        cx.p.banks.write().remove(i - 1);
+        st.bank_sel = st.bank_sel.min(st.banks.len() - 1);
+    }
+
+    let b = st.bank_sel.min(st.banks.len() - 1);
+    let cur = {
+        let s = cx.p.patch.read();
+        (s.bank == b).then_some(s.program)
+    };
+    let mut clicked = None;
+    ui.scope_builder(UiBuilder::new().max_rect(inner(progs_r)).layout(Layout::top_down(Align::Min)), |ui| {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let n = st.banks[b].patches.len();
+            let rows = n.div_ceil(COLS);
+            let col_w = (ui.available_width() / COLS as f32).floor();
+            for r in 0..rows {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for c in 0..COLS {
+                        let i = c * rows + r;
+                        let (cell, resp) = ui.allocate_exact_size(vec2(col_w, 20.0), Sense::click());
+                        if let Some(p) = st.banks[b].patches.get(i) {
+                            let sel = cur == Some(i);
+                            if resp.hovered() {
+                                ui.painter().rect_filled(cell.shrink2(vec2(2.0, 1.0)), CornerRadius::same(3), pl.key);
+                            }
+                            let num_col = if sel { pl.orange } else { pl.ink_soft };
+                            ui.painter().text(pos2(cell.left() + 6.0, cell.center().y), Align2::LEFT_CENTER, format!("{:03}", i + 1), value_font(), num_col);
+                            ui.painter().text(pos2(cell.left() + 36.0, cell.center().y), Align2::LEFT_CENTER, &p.name, label_font(), if sel { pl.orange } else { pl.ink });
+                            if resp.clicked() {
+                                clicked = Some(i);
+                            }
+                        }
+                    }
+                });
+            }
         });
     });
-}
-
-fn row(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(2.5 * U);
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0 * U;
-        f(ui)
-    });
-}
-
-fn panel(ui: &mut egui::Ui, params: &Es1Params, setter: &ParamSetter) {
-    row(ui, |ui| {
-        group(ui, params, setter, "oscillator 1", &[(0, "wave"), (76, "detune"), (45, "fm"), (95, "sub"), (96, "sub wave"), (97, "sub oct")]);
-        group(ui, params, setter, "oscillator 2", &[(1, "wave"), (2, "pitch"), (3, "fine"), (6, "sync"), (7, "ring"), (4, "track")]);
-        group(ui, params, setter, "mixer", &[(5, "mix"), (8, "p/w"), (91, "phase"), (9, "key"), (72, "tune")]);
-    });
-    row(ui, |ui| {
-        group(ui, params, setter, "mod envelope", &[(10, "on"), (71, "dest"), (12, "attack"), (13, "decay"), (11, "amount")]);
-        group(
-            ui,
-            params,
-            setter,
-            "filter",
-            &[(14, "type"), (19, "cutoff"), (20, "reso"), (21, "env"), (23, "sat"), (22, "track"), (24, "vel"), (15, "a"), (16, "d"), (17, "s"), (18, "r")],
-        );
-    });
-    row(ui, |ui| {
-        group(ui, params, setter, "amplifier", &[(25, "a"), (26, "d"), (27, "s"), (28, "r"), (29, "gain"), (30, "vel")]);
-        group(ui, params, setter, "lfo 1", &[(57, "on"), (42, "wave"), (41, "dest"), (43, "speed"), (44, "depth"), (67, "tempo"), (68, "key")]);
-        group(ui, params, setter, "lfo 2", &[(58, "on"), (47, "wave"), (46, "dest"), (48, "speed"), (49, "depth"), (69, "tempo"), (70, "key")]);
-    });
-    row(ui, |ui| {
-        group(
-            ui,
-            params,
-            setter,
-            "voice",
-            &[(38, "mode"), (94, "poly"), (39, "porta"), (74, "auto"), (73, "unison"), (93, "voices"), (75, "detune"), (92, "phase"), (84, "spread"), (85, "pitch"), (40, "bend")],
-        );
-        group(ui, params, setter, "arpeggiator", &[(59, "on"), (31, "type"), (32, "range"), (33, "beat"), (34, "gate")]);
-    });
-    row(ui, |ui| {
-        group(ui, params, setter, "effect", &[(77, "on"), (78, "type"), (79, "ctl 1"), (80, "ctl 2"), (81, "level")]);
-        group(ui, params, setter, "equalizer", &[(61, "freq"), (62, "level"), (63, "q"), (60, "tone"), (90, "pan")]);
-        group(ui, params, setter, "delay", &[(65, "on"), (82, "type"), (35, "time"), (83, "spread"), (36, "fdbk"), (98, "tone"), (37, "mix")]);
-    });
-    row(ui, |ui| {
-        group(ui, params, setter, "chorus", &[(66, "on"), (64, "type"), (52, "time"), (53, "depth"), (54, "rate"), (55, "fdbk"), (56, "level")]);
-        group(ui, params, setter, "control", &[(86, "src 1"), (87, "target 1"), (50, "amt 1"), (88, "src 2"), (89, "target 2"), (51, "amt 2")]);
-    });
+    if let Some(i) = clicked {
+        let patch = st.banks[b].patches[i].clone();
+        load_patch(cx.p, shared, cx.s, st, &patch, b, i);
+        st.message = None;
+    }
 }
