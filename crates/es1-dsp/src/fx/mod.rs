@@ -72,6 +72,27 @@ struct DistChannel {
     hpf: Biquad,
 }
 
+impl DistChannel {
+    /// The three cascaded tube stages of the AD1 drive, with self-biasing.
+    #[inline]
+    fn tubes(&mut self, mut inp: f32, kb: [f32; 3], kh: f32, kl: f32) -> f32 {
+        for (i, s) in self.st.iter_mut().enumerate() {
+            let target = if i == 0 { (1.0 - s.out) * 5.0 } else { 1.0 - s.out };
+            s.bias += (target - s.bias) * kb[i];
+            let o = tube_t(inp + s.bias);
+            s.hp = (o - s.out + s.hp) * kh;
+            s.out = o;
+            if i < 2 {
+                s.lp += (s.hp - s.lp) * kl;
+                inp = s.lp;
+            } else {
+                inp = s.hp;
+            }
+        }
+        inp
+    }
+}
+
 #[inline]
 fn tube_t(v: f32) -> f32 {
     if v >= 0.0 {
@@ -165,12 +186,27 @@ impl Effector {
             ph_up: true,
         };
         e.update();
+        e.settle_tubes();
         e
     }
 
     pub fn set_sample_rate(&mut self, sr: f32) {
         self.sr = sr;
         self.update();
+        self.settle_tubes();
+    }
+
+    /// Run the tube stages on silence until their bias reaches its resting point. Starting from
+    /// zero state they otherwise snap there within the first millisecond: a loud click whenever
+    /// a sound using the drive is first played.
+    fn settle_tubes(&mut self) {
+        let (kb, kh, kl) = (self.kb, self.kh, self.kl);
+        for c in &mut self.dist {
+            c.st = Default::default();
+            for _ in 0..(self.sr * 0.1) as usize {
+                c.tubes(0.0, kb, kh, kl);
+            }
+        }
     }
 
     pub fn set(&mut self, ctl1: f32, ctl2: f32, level: f32) {
@@ -229,22 +265,7 @@ impl Effector {
         let y = match mode {
             EffectType::Drive1 => {
                 let (kb, kh, kl) = (self.kb, self.kh, self.kl);
-                let c = &mut self.dist[ch];
-                let mut inp = g * x;
-                for (i, s) in c.st.iter_mut().enumerate() {
-                    let target = if i == 0 { (1.0 - s.out) * 5.0 } else { 1.0 - s.out };
-                    s.bias += (target - s.bias) * kb[i];
-                    let o = tube_t(inp + s.bias);
-                    s.hp = (o - s.out + s.hp) * kh;
-                    s.out = o;
-                    if i < 2 {
-                        s.lp += (s.hp - s.lp) * kl;
-                        inp = s.lp;
-                    } else {
-                        inp = s.hp;
-                    }
-                }
-                inp
+                self.dist[ch].tubes(g * x, kb, kh, kl)
             }
             EffectType::Drive2 => {
                 let u = (x + 1e-4) * g;
@@ -792,6 +813,16 @@ impl MasterFx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drive_starts_without_a_click() {
+        let mut e = Effector::new(48_000.0);
+        e.on = true;
+        e.kind = EffectType::Drive1;
+        e.set(60.0, 64.0, 127.0);
+        let peak = (0..4800).map(|_| e.tick(0.0, 0.0)).fold(0.0f32, |m, (l, r)| m.max(l.abs()).max(r.abs()));
+        assert!(peak < 1e-3, "drive output on silence peaks at {peak}");
+    }
 
     #[test]
     fn chain_is_finite_for_all_effects() {

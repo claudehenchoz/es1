@@ -14,7 +14,7 @@ mod widgets;
 use crate::params::{Es1Params, HostParam, StoredBank, NO_PROGRAM};
 use crate::Shared;
 use es1_dsp::params::{Kind, PARAMS};
-use es1_presets::{factory_bank, load_path, parse_sy1, write_sy1, Bank, Sy1Patch};
+use es1_presets::{factory_bank, load_path, parse_sy1, to_latin1, write_sy1, Bank, Sy1Patch};
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{self, pos2, vec2, Align, Align2, CornerRadius, Layout, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder};
 use nih_plug_egui::{create_egui_editor, EguiState};
@@ -115,7 +115,8 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
 }
 
 /// Debug builds only: `ES1_UI_SELFTEST=step` steps to the next program 1.5 s after opening, so
-/// the preset tween can be captured; `=popup` opens the LFO 1 destination list.
+/// the preset tween can be captured; `=popup` opens the LFO 1 destination list; `=browser`
+/// opens the program browser.
 #[cfg(debug_assertions)]
 fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
     let Ok(mode) = std::env::var("ES1_UI_SELFTEST") else { return };
@@ -133,6 +134,7 @@ fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut 
                 step_program(&cx, shared, st, 82);
             }
             "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
+            "browser" => st.browser = true,
             // `note[:program]`: optionally select a factory program, then hold A3 for the scope.
             m if m.starts_with("note") => {
                 if let Some(n) = m.strip_prefix("note:").and_then(|n| n.parse::<i32>().ok()) {
@@ -643,7 +645,7 @@ fn save(params: &Es1Params, st: &mut UiState) {
         return;
     };
     let p = Sy1Patch::from_values(&name, &current_values(params));
-    st.message = Some(match std::fs::write(&path, write_sy1(&p)) {
+    st.message = Some(match std::fs::write(&path, to_latin1(&write_sy1(&p))) {
         Ok(()) => "saved".into(),
         Err(e) => format!("save failed: {e}"),
     });
