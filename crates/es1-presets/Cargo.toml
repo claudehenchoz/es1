@@ -1,6 +1,6 @@
 [package]
 name = "es1-presets"
-description = "Synth1 .sy1 patch parser and ES 1 factory bank"
+description = ".sy1 patch reader/writer and the ES 1 factory bank"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

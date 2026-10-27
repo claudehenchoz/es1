@@ -1,4 +1,4 @@
-//! The complete instrument (Synth1 `CSynthesizer1`): parameter dispatch, keyboard, voice
+//! The complete instrument: parameter dispatch, keyboard, voice
 //! allocation, unison, portamento, LFOs, MIDI-controller modulation, arpeggiator, master
 //! effects and volume.
 
@@ -16,13 +16,13 @@ pub const MAX_VOICES: usize = 32;
 /// Control-rate chunk: LFOs, pitch and cutoff are updated every `CHUNK` samples.
 pub const CHUNK: usize = 16;
 
-/// Unison detune in cents for a 0..127 value (Synth1 1.09+ exponential law), 0..100 ct.
+/// Unison detune in cents for a 0..127 value (exponential law), 0..100 ct.
 pub fn unison_detune_cents(v: f32) -> f32 {
     let e2 = core::f32::consts::E * core::f32::consts::E;
     100.0 * ((2.0 * v / 127.0).exp() - 1.0) / (e2 - 1.0)
 }
 
-/// Master volume 0..127 → linear gain (Synth1 `FUN_18002a8a0`): 64 ≈ −1.7 dB, 127 ≈ +9.2 dB.
+/// Master volume 0..127 → linear gain: 64 ≈ −1.7 dB, 127 ≈ +9.2 dB.
 pub fn master_gain(v: f32) -> f32 {
     if v <= 0.0 {
         return 0.0;
@@ -224,7 +224,7 @@ impl Synth {
         self.master.set(master_gain(v));
     }
 
-    /// Load a complete patch (current-version values). Silences all voices, like Synth1.
+    /// Load a complete patch (current-version values). Silences all voices.
     pub fn load_values(&mut self, v: &Values) {
         for (i, &x) in v.iter().enumerate() {
             self.base[i] = x as f32;

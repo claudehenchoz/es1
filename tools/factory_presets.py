@@ -203,7 +203,7 @@ def sub(wave, lvl, down=True):
 # ---- the bank ----------------------------------------------------------------------------------
 # 64 sounds, grouped: bass, lead, pad, keys, brass & strings, pluck & sequence, effects.
 # Names are tongue-in-cheek homages to West German household electronics of the 1970s. They are
-# written in Latin-1 (as Synth1 on Windows writes them), so umlauts survive.
+# written in Latin-1, the format's encoding, so umlauts survive.
 
 BANK = []
 

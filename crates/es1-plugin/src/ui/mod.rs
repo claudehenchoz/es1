@@ -57,6 +57,8 @@ struct UiState {
     bank_sel: usize,
     message: Option<String>,
     tween: Option<Tween>,
+    /// A file dialog running on its worker thread.
+    dialog: Option<Dialog>,
     scope: scope::ScopeView,
 }
 
@@ -81,6 +83,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             bank_sel: 0,
             message: None,
             tween: None,
+            dialog: None,
             scope: scope::ScopeView::default(),
         },
         move |ctx, st| {
@@ -94,6 +97,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             #[cfg(debug_assertions)]
             selftest(&params, &shared, setter, st, ctx);
             run_tween(&params, setter, st, ctx);
+            poll_dialog(&params, &shared, setter, st, ctx);
             egui::CentralPanel::default().frame(egui::Frame::new().fill(pal().body)).show(ctx, |ui| {
                 let cx = Cx { p: &params, s: setter };
                 let full = ui.max_rect();
@@ -116,7 +120,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
 
 /// Debug builds only: `ES1_UI_SELFTEST=step` steps to the next program 1.5 s after opening, so
 /// the preset tween can be captured; `=popup` opens the LFO 1 destination list; `=browser`
-/// opens the program browser.
+/// opens the program browser; `=import` presses the import key.
 #[cfg(debug_assertions)]
 fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
     let Ok(mode) = std::env::var("ES1_UI_SELFTEST") else { return };
@@ -135,6 +139,11 @@ fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut 
             }
             "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
             "browser" => st.browser = true,
+            // `import` opens the file dialog; with ES1_UI_IMPORT=<path> it imports that file directly.
+            "import" => match std::env::var_os("ES1_UI_IMPORT") {
+                Some(path) => import(params, shared, setter, st, std::path::Path::new(&path)),
+                None => start_import(st),
+            },
             // `note[:program]`: optionally select a factory program, then hold A3 for the scope.
             m if m.starts_with("note") => {
                 if let Some(n) = m.strip_prefix("note:").and_then(|n| n.parse::<i32>().ok()) {
@@ -621,34 +630,95 @@ fn step_program(cx: &Cx, shared: &Shared, st: &mut UiState, delta: i32) {
     load_patch(cx.p, shared, cx.s, st, &patch, b, p);
 }
 
-fn import(params: &Es1Params, st: &mut UiState) {
-    let Some(path) = rfd::FileDialog::new().add_filter("Synth1 patches", &["sy1", "zip"]).pick_file() else { return };
-    match load_path(&path) {
-        Ok(banks) => {
-            let mut stored = params.banks.write();
-            let mut count = 0;
-            for b in banks {
-                count += b.patches.len();
-                stored.push(StoredBank { name: b.name.clone(), patches: b.patches.iter().map(write_sy1).collect() });
-                st.banks.push(b);
-            }
-            st.bank_sel = st.banks.len() - 1;
-            st.message = Some(format!("imported {count} patches"));
+// File dialogs run on a worker thread. A modal dialog pumps the window's messages while it is
+// open; called from inside the editor's frame it re-enters baseview's window procedure and
+// panics ("RefCell already borrowed"), which aborts the host.
+
+enum DialogKind {
+    Import,
+    /// Save the patch text (already serialized when the dialog opened).
+    Save(Vec<u8>),
+}
+
+struct Dialog {
+    kind: DialogKind,
+    /// In a mutex only because the editor state must be `Sync`.
+    rx: parking_lot::Mutex<std::sync::mpsc::Receiver<Option<std::path::PathBuf>>>,
+}
+
+fn spawn_dialog(st: &mut UiState, kind: DialogKind, run: impl FnOnce() -> Option<std::path::PathBuf> + Send + 'static) {
+    if st.dialog.is_some() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(run());
+    });
+    st.dialog = Some(Dialog { kind, rx: parking_lot::Mutex::new(rx) });
+}
+
+fn start_import(st: &mut UiState) {
+    spawn_dialog(st, DialogKind::Import, || rfd::FileDialog::new().add_filter("Patches", &["sy1", "zip"]).pick_file());
+}
+
+fn start_save(params: &Es1Params, st: &mut UiState) {
+    let name = params.patch.read().name.clone();
+    let text = to_latin1(&write_sy1(&Sy1Patch::from_values(&name, &current_values(params))));
+    spawn_dialog(st, DialogKind::Save(text), move || {
+        rfd::FileDialog::new().add_filter("Patch", &["sy1"]).set_file_name(format!("{name}.sy1")).save_file()
+    });
+}
+
+/// Pick up a finished dialog; while one is open, keep polling.
+fn poll_dialog(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
+    let Some(d) = &st.dialog else { return };
+    let path = match d.rx.lock().try_recv() {
+        Ok(path) => path,
+        Err(std::sync::mpsc::TryRecvError::Empty) => {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return;
         }
-        Err(e) => st.message = Some(format!("import failed: {e}")),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+    };
+    let kind = st.dialog.take().map(|d| d.kind);
+    let Some(path) = path else { return };
+    match kind {
+        Some(DialogKind::Import) => import(params, shared, setter, st, &path),
+        Some(DialogKind::Save(text)) => {
+            st.message = Some(match std::fs::write(&path, text) {
+                Ok(()) => "saved".into(),
+                Err(e) => format!("save failed: {e}"),
+            });
+        }
+        None => {}
     }
 }
 
-fn save(params: &Es1Params, st: &mut UiState) {
-    let name = params.patch.read().name.clone();
-    let Some(path) = rfd::FileDialog::new().add_filter("Synth1 patch", &["sy1"]).set_file_name(format!("{name}.sy1")).save_file() else {
-        return;
-    };
-    let p = Sy1Patch::from_values(&name, &current_values(params));
-    st.message = Some(match std::fs::write(&path, to_latin1(&write_sy1(&p))) {
-        Ok(()) => "saved".into(),
-        Err(e) => format!("save failed: {e}"),
-    });
+/// Add the banks in `path`; a single patch is loaded straight away.
+fn import(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, path: &std::path::Path) {
+    match load_path(path) {
+        Ok(banks) => {
+            let mut count = 0;
+            {
+                let mut stored = params.banks.write();
+                for b in banks {
+                    count += b.patches.len();
+                    stored.push(StoredBank { name: b.name.clone(), patches: b.patches.iter().map(write_sy1).collect() });
+                    st.banks.push(b);
+                }
+            }
+            st.bank_sel = st.banks.len() - 1;
+            if count == 1 {
+                let b = st.bank_sel;
+                let patch = st.banks[b].patches[0].clone();
+                load_patch(params, shared, setter, st, &patch, b, 0);
+                st.message = None;
+            } else {
+                st.message = Some(format!("imported {count} patches"));
+            }
+        }
+        Err(e) => st.message = Some(format!("import failed: {e}")),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -720,11 +790,11 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
         if key(ui, if st.browser { "panel" } else { "programs" }, 76.0).clicked() {
             st.browser = !st.browser;
         }
-        if key(ui, "import", 56.0).on_hover_text("Load a Synth1 .sy1 file or .zip bank").clicked() {
-            import(cx.p, st);
+        if key(ui, "import", 56.0).on_hover_text("Load a .sy1 patch or a .zip bank").clicked() {
+            start_import(st);
         }
         if key(ui, "save", 48.0).on_hover_text("Save the current sound as a .sy1 file").clicked() {
-            save(cx.p, st);
+            start_save(cx.p, st);
         }
     });
 

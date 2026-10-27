@@ -71,7 +71,7 @@ fn blamp_after(tau: f32) -> f32 {
 #[inline(always)]
 fn naive(wave: Wave, p: f32, pw: f32) -> f32 {
     match wave {
-        // Falling ramp, +1 at phase 0 (Synth1 >= 1.11 polarity).
+        // Falling ramp, +1 at phase 0.
         Wave::Saw => 1.0 - 2.0 * p,
         Wave::Square => {
             if p < 0.5 {
@@ -118,7 +118,7 @@ impl Osc {
     pub fn tick(&mut self, wave: Wave, dt: f32, pw: f32, sync: SyncEvent) -> (f32, SyncEvent) {
         if wave == Wave::Noise {
             let out = self.held;
-            // Binary ±1 noise, like Synth1's 1-bit LFSR (same RMS level).
+            // Binary ±1 noise (the level of a 1-bit LFSR).
             self.held = if self.rng.next_u32() & 0x8000_0000 != 0 { 1.0 } else { -1.0 };
             return (out, None);
         }

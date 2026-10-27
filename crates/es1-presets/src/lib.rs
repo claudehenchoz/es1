@@ -1,6 +1,6 @@
-//! Synth1 `.sy1` patch files and the embedded ES 1 factory bank.
+//! `.sy1` patch files and the embedded ES 1 factory bank.
 //!
-//! Format (observed in Synth1 1.13, reader at `FUN_18001e350`):
+//! Format:
 //! ```text
 //! <patch name, max 32 chars>
 //! color=<name>          (optional)
@@ -10,7 +10,7 @@
 
 use std::io::{Read, Seek};
 
-/// Highest sy1 index (+1) used by Synth1 1.13.
+/// Highest sy1 index (+1) the format uses.
 pub const SY1_SLOTS: usize = 100;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,8 +60,7 @@ impl From<zip::result::ZipError> for Error {
     }
 }
 
-/// Decode bytes as Latin-1 (Synth1 files are ANSI; names are ASCII in practice).
-/// Patch files are Latin-1 (what Synth1 writes on Windows). Text that is valid UTF-8 (patches
+/// Patch files are Latin-1 (ANSI on Windows). Text that is valid UTF-8 (patches
 /// kept in a project's state, or saved by other tools) is taken as UTF-8.
 fn decode(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
@@ -93,7 +92,7 @@ fn atoi(s: &str) -> i32 {
     (if neg { -v } else { v }) as i32
 }
 
-/// Parse a `.sy1` file. Never fails on malformed lines; they are skipped like Synth1 does.
+/// Parse a `.sy1` file. Never fails on malformed lines; they are skipped.
 pub fn parse_sy1(bytes: &[u8]) -> Result<Sy1Patch, Error> {
     let text = decode(bytes);
     let mut lines = text.split('\n').map(|l| l.trim_end_matches('\r'));
@@ -127,8 +126,8 @@ pub fn parse_sy1(bytes: &[u8]) -> Result<Sy1Patch, Error> {
 }
 
 impl Sy1Patch {
-    /// Complete current-version parameter values: Synth1 template, overlaid with this file's
-    /// entries, version-converted and clamped (exactly how Synth1 loads a patch).
+    /// Complete current-version parameter values: the template, overlaid with this file's
+    /// entries, version-converted and clamped.
     pub fn to_values(&self) -> es1_dsp::Values {
         es1_dsp::params::from_sparse(&self.values[..es1_dsp::params::NUM_SY1], self.version)
     }
@@ -143,7 +142,7 @@ impl Sy1Patch {
     }
 }
 
-/// Serialize in Synth1's own layout (`%d,%d\n` lines), so files round-trip into Synth1.
+/// Serialize in the format's own layout (`%d,%d` lines), so files load in other `.sy1` players.
 pub fn write_sy1(p: &Sy1Patch) -> String {
     let mut s = String::new();
     s.push_str(&p.name);
@@ -289,15 +288,27 @@ mod tests {
 
     #[test]
     fn zip_banks_load() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../synth1-decomp/zipbank");
-        if !root.exists() {
-            return;
+        use std::io::Write;
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            for (path, body) in [
+                ("bass/002.sy1", "Two\r\nver=113\r\n0,1\r\n"),
+                ("bass/001.sy1", "One\r\nver=113\r\n0,2\r\n"),
+                ("pads\\001.sy1", "Pad\r\n14,3\r\n"),
+                ("top.sy1", "Top\r\n"),
+                ("readme.txt", "not a patch"),
+            ] {
+                z.start_file(path, opts).unwrap();
+                z.write_all(body.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
         }
-        let ryd = load_path(&root.join("rydsound.zip")).unwrap();
-        let n: usize = ryd.iter().map(|b| b.patches.len()).sum();
-        assert_eq!(n, 15);
-        let fac = load_path(&root.join("factory preset.zip")).unwrap();
-        let n: usize = fac.iter().map(|b| b.patches.len()).sum();
-        assert_eq!(n, 128);
+        buf.set_position(0);
+        let banks = read_zip_banks(buf, "test").unwrap();
+        let names: Vec<_> = banks.iter().map(|b| (b.name.as_str(), b.patches.iter().map(|p| p.name.as_str()).collect::<Vec<_>>())).collect();
+        assert_eq!(names, [("test", vec!["Top"]), ("test/bass", vec!["One", "Two"]), ("test/pads", vec!["Pad"])]);
+        assert_eq!(banks[2].patches[0].version, 100);
     }
 }

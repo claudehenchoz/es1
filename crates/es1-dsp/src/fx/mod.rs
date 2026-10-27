@@ -1,9 +1,9 @@
-//! Master effect chain, after Synth1's `CSynthesizer1` device graph:
+//! Master effect chain:
 //!
 //! voice sum → effect block (dist / lo-fi / ring / comp / phaser) → peak EQ → tone → pan
 //! → tempo delay (tone filter in the loop) → chorus/flanger.
 //!
-//! As in Synth1, when the chorus is on the delay's wet signal is fed *through* the chorus line;
+//! When the chorus is on, the delay's wet signal is fed *through* the chorus line;
 //! otherwise it is added to the output directly.
 
 pub mod prim;
@@ -21,7 +21,7 @@ fn db(g: f32) -> f32 {
 }
 
 // ------------------------------------------------------------------------------------------
-// Effect block (Synth1 "effect" section, types 0..9)
+// Effect block (types 0..9)
 // ------------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,7 +410,7 @@ impl Tone {
 // Tempo delay
 // ------------------------------------------------------------------------------------------
 
-/// Delay time divisions in ticks of 1/24 quarter note (Synth1 table at 0x180093a90).
+/// Delay time divisions in ticks of 1/24 quarter note.
 pub const DELAY_TICKS: [u32; 20] = [0, 1, 2, 3, 4, 6, 8, 9, 12, 16, 18, 21, 24, 32, 36, 42, 48, 72, 84, 96];
 pub const DELAY_TIME_NAMES: [&str; 20] = [
     "0", "1/96", "1/32T", "1/32", "1/16T", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/8..", "1/4", "1/2T", "1/4.",

@@ -1,8 +1,7 @@
 //! ES 1 synthesis engine.
 //!
-//! Architecture and parameter mapping follow Daichi's Synth1 (reverse-engineered, see
-//! `docs/synth1-spec.md`); the DSP itself is modern: band-limited oscillators and
-//! zero-delay-feedback filters.
+//! A two-oscillator virtual analog with band-limited oscillators and zero-delay-feedback
+//! filters. Parameters are keyed by their `.sy1` patch-format index.
 
 pub mod arp;
 pub mod env;

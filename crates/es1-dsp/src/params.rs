@@ -1,13 +1,10 @@
-//! The parameter set, keyed by Synth1's `.sy1` index.
-//!
-//! Everything here is recovered from `Synth1 VST64.dll` 1.13 (see `docs/re/`):
-//! * names / ranges: descriptor table at 0x180093f10,
-//! * defaults: the "initial sound" template at 0x180093af0,
-//! * version conversion: `FUN_180026a10` (fall-through switch over file versions 100..111).
+//! The parameter set, keyed by `.sy1` patch-format index: names, ranges, the defaults of the
+//! "initial sound" template, and the conversion of files written by older format versions
+//! (100..111).
 
 /// Number of sy1 slots used (0..=98).
 pub const NUM_SY1: usize = 99;
-/// The current patch format version (Synth1 1.13).
+/// The current patch format version.
 pub const CURRENT_VERSION: i32 = 113;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,7 +30,7 @@ pub struct ParamDef {
     pub max: i32,
     pub default: i32,
     pub kind: Kind,
-    /// MIDI-controller modulation may target it (Synth1 "continuous" flag).
+    /// MIDI-controller modulation may target it.
     pub modulatable: bool,
 }
 
@@ -85,7 +82,7 @@ pub const CHORUS_TYPES: Kind = Kind::Choice { labels: &["1", "2", "3", "4"], val
 pub const PLAY_MODES: Kind = Kind::Choice { labels: &["poly", "mono", "legato"], values: &[0, 1, 2] };
 pub const ARP_TYPES: Kind = Kind::Choice { labels: &["up/down", "up", "down", "random"], values: &[1, 2, 3, 4] };
 pub const ARP_OCT: Kind = Kind::Choice { labels: &["1 oct", "2 oct", "3 oct", "4 oct"], values: &[0, 1, 2, 3] };
-/// Arp beat (ticks at 24/quarter): Synth1 table 0x180093000.
+/// Arp beat (ticks at 24/quarter).
 pub const ARP_TICKS: [u32; 19] = [96, 84, 72, 48, 42, 36, 32, 24, 21, 18, 16, 12, 9, 8, 6, 4, 3, 2, 1];
 pub const ARP_BEATS: Kind = Kind::Choice {
     labels: &[
@@ -97,7 +94,7 @@ pub const ARP_BEATS: Kind = Kind::Choice {
 pub const LFO_WAVES: Kind = Kind::Choice { labels: &["saw", "tri", "sine", "square", "s&h", "smooth"], values: &[0, 1, 5, 2, 3, 4] };
 pub const LFO_DESTS: Kind =
     Kind::Choice { labels: &["osc 2", "osc 1+2", "filter", "amp", "p/w", "fm", "pan"], values: &[1, 2, 3, 4, 5, 6, 7] };
-/// MIDI controller sources (Synth1 table 0x180094e68): CC1..CC11, channel pressure, pitch bend.
+/// MIDI controller sources: CC1..CC11, channel pressure, pitch bend.
 pub const CTRL_SRCS: Kind = Kind::Choice {
     labels: &[
         "mod wheel", "breath", "cc 3", "foot", "porta time", "data entry", "volume", "balance", "cc 9", "pan", "expression",
@@ -106,7 +103,7 @@ pub const CTRL_SRCS: Kind = Kind::Choice {
     values: &[0xB001, 0xB002, 0xB003, 0xB004, 0xB005, 0xB006, 0xB007, 0xB008, 0xB009, 0xB00A, 0xB00B, 0xD000, 0xE000],
 };
 
-/// All parameters, in panel order. `default` is Synth1's template value (clamped into range).
+/// All parameters, in panel order. `default` is the template value (clamped into range).
 pub static PARAMS: &[ParamDef] = &[
     // Oscillators
     p!(0, "osc1_wave", "Osc 1 Wave", Osc, 0, 3, 2, OSC1_WAVES, false),
@@ -237,7 +234,7 @@ pub fn by_sy1(sy1: usize) -> Option<&'static ParamDef> {
 /// A complete set of sy1 values (index = sy1 index).
 pub type Values = [i32; NUM_SY1];
 
-/// Synth1's "initial sound" template (filter amount stored as 128 there, clamped to 127).
+/// The "initial sound" template (filter amount stored as 128 in the format, clamped to 127).
 pub fn template() -> Values {
     let mut v = [0; NUM_SY1];
     for p in PARAMS {
@@ -270,7 +267,7 @@ impl ParamDef {
 }
 
 // ------------------------------------------------------------------------------------------
-// Version conversion (FUN_180026a10 and its stage functions)
+// Version conversion
 // ------------------------------------------------------------------------------------------
 
 /// Index of the 0..127 value whose new-curve output is nearest to `target`.
@@ -297,8 +294,8 @@ fn fine_cents(n: f64) -> f64 {
     }
 }
 
-/// Convert raw values of a file written by Synth1 `version` (<113) to the current curves.
-/// Mirrors Synth1's fall-through switch exactly, including its quirks.
+/// Convert raw values of a file written by format `version` (<113) to the current curves.
+/// Each version step applies in turn, quirks included, so old files load as they were made.
 pub fn convert(v: &mut Values, version: i32) {
     if version >= CURRENT_VERSION {
         return;
@@ -368,7 +365,7 @@ pub fn convert(v: &mut Values, version: i32) {
             out[54] = nearest(target, |n| if n == 0.0 { 0.01 } else { 0.02 * 20000f64.powf(n / 127.0) });
         }
         {
-            // Synth1 quirk: trunc(-v/127) is 0 unless v == 127.
+            // Format quirk: trunc(-v/127) is 0 unless v == 127.
             let target = 0.9 * (-(orig[55] as f64) / 127.0).trunc();
             out[55] = nearest(target, |n| (n - 64.0) / 64.0 * 0.99);
         }

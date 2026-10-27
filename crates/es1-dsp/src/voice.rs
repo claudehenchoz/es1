@@ -1,13 +1,13 @@
 //! One synth voice: oscillators (incl. 8-way osc 1 detune and sub), mod envelope, filter with
-//! its ADSR, post-filter limiter/saturation and the amp ADSR — Synth1's `CVoice` / `CVco` /
-//! `CVcf` / `CVca` signal path, with modern band-limited oscillators and ZDF filters.
+//! its ADSR, post-filter limiter/saturation and the amp ADSR, with band-limited oscillators and
+//! ZDF filters.
 
 use crate::env::{EnvParams, Envelope};
 use crate::filter::{FilterMode, VoiceFilter};
 use crate::osc::{Osc, Wave};
 use crate::util::{fast_exp2, note_to_hz, Rng};
 
-/// Synth1 cutoff curve: index 0..1024 → 15 Hz · 1066.67^(i/1024) (15 Hz .. 16 kHz).
+/// Cutoff curve: index 0..1024 → 15 Hz · 1066.67^(i/1024) (15 Hz .. 16 kHz).
 #[inline]
 pub fn cutoff_hz(idx: f32) -> f32 {
     // log2(1066.6667) = 10.0589
@@ -38,7 +38,7 @@ pub struct VoiceParams {
     pub g1: f32,
     pub g2: f32,
     pub gsub: f32,
-    /// Pulse width 0..1 (knob), Synth1 duty = pw/2 after modulation.
+    /// Pulse width 0..1 (knob); duty = pw/2 after modulation.
     pub pw: f32,
     /// FM knob 0..127.
     pub fm: f32,
@@ -224,7 +224,7 @@ impl Voice {
         self.aenv.is_active()
     }
 
-    /// Set the note (pitch) — Synth1 `CVoice::noteOn`. `glide` enables portamento from the
+    /// Set the note (pitch). `glide` enables portamento from the
     /// previous note of this voice.
     pub fn note_on(&mut self, p: &VoiceParams, note: u8, velocity: u8, glide: bool) {
         if glide && p.porta_time > 0.0 {
@@ -242,7 +242,7 @@ impl Voice {
         self.velocity = velocity;
     }
 
-    /// Gate on: start envelopes — Synth1 `CVoice::trigger`.
+    /// Gate on: start envelopes.
     pub fn trigger(&mut self, p: &VoiceParams) {
         self.gate = true;
         let v = self.velocity as f32;
@@ -309,7 +309,7 @@ impl Voice {
 
         // ---- control-rate values ---------------------------------------------------------
         // Envelopes (advanced sample-accurately inside the loop for the amp; the mod and
-        // filter envelopes are sampled at control rate like Synth1).
+        // filter envelopes are sampled at control rate).
         let menv = self.menv.level;
         let fenv = self.fenv.level;
         for _ in 0..n {
@@ -352,7 +352,7 @@ impl Voice {
         let dt1 = f1.min(nyq) / sr;
         let dt2 = f2.min(nyq) / sr;
 
-        // PW (Synth1: pw in 0..2, duty = pw/2).
+        // PW (pw in 0..2, duty = pw/2).
         let pwm = m.pw + if p.menv_dest == 2 { menv_v } else { 0.0 };
         let pw0 = p.pw;
         let pw = if pwm <= 0.0 { pw0 * (1.0 + pwm.max(-1.0)) } else { pw0 + (2.0 - pw0) * pwm.min(1.0) };
@@ -363,7 +363,7 @@ impl Voice {
         let fm = if fmm > 0.0 { p.fm + fmm.min(1.0) * (127.0 - p.fm) } else { p.fm + fmm.max(-1.0) * p.fm };
         let fm_depth = if p.ring || fm <= 0.0 { 0.0 } else { 0.5 * (1000f32.powf(fm / 127.0) - 1.0) / 999.0 };
 
-        // Mix gains (Synth1 FUN_18003bf50 compensation factors).
+        // Mix gains with per-waveform level compensation.
         let detune = p.detune_cents > 0.0;
         let mut g1 = p.g1;
         let mut g2 = p.g2;
@@ -373,7 +373,7 @@ impl Voice {
         }
         if detune && !p.ring {
             g1 *= 0.3;
-            gsub *= 0.3 * 3.0; // single sub instead of Synth1's 9 summed copies
+            gsub *= 0.3 * 3.0; // single sub, matching the level of 9 summed copies
         }
         if fm_depth == 0.0 {
             if p.osc2_wave == Wave::Pulse {
@@ -409,7 +409,7 @@ impl Voice {
         let cutoff = cutoff_hz(idx.clamp(0.0, 1023.0));
         let drive = 1.0;
 
-        // Amp gain: ramp linearly across the chunk (like Synth1's VCA).
+        // Amp gain: ramp linearly across the chunk.
         let pan = self.uni_pan;
         let (pl, pr) = (if pan > 0.0 { 1.0 - pan } else { 1.0 }, if pan < 0.0 { 1.0 + pan } else { 1.0 });
         let sat100 = p.sat * 100.0;
@@ -466,7 +466,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cutoff_curve_matches_synth1() {
+    fn cutoff_curve_spans_15hz_to_16khz() {
         assert!((cutoff_hz(0.0) - 15.0).abs() < 0.01);
         assert!((cutoff_hz(1024.0) - 16_000.0).abs() < 5.0);
     }

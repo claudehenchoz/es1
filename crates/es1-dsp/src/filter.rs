@@ -4,7 +4,7 @@
 //! * `Lp24`: Zavalishin TPT 4-pole ladder, solved implicitly. Feedback saturation keeps max
 //!   resonance bounded.
 //!
-//! Type order matches Synth1 (`CVcf`): 0 LP12, 1 LP24, 2 HP12, 3 BP12, 4 LPDL.
+//! Type order matches the `.sy1` format: 0 LP12, 1 LP24, 2 HP12, 3 BP12, 4 LPDL.
 //! * `LpDiode`: 4-stage coupled diode ladder (each stage sees the next stage's state, as in the
 //!   TB-303 circuit), run at 2x oversampling, with tanh feedback.
 
@@ -22,7 +22,7 @@ pub enum FilterMode {
 }
 
 impl FilterMode {
-    /// Synth1 `filter type` value 0..4.
+    /// `.sy1` `filter type` value 0..4.
     pub fn from_index(i: i32) -> Self {
         match i {
             0 => Self::Lp12,

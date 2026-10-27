@@ -1,12 +1,9 @@
-//! Global LFOs (Synth1 `CLFO`). Both LFOs are shared by every voice, key sync resets them for
-//! all voices at each note-on.
-//!
-//! Unlike Synth1, which holds LFO values over 32..64-sample chunks, values are computed per
-//! sample here.
+//! Global LFOs. Both LFOs are shared by every voice; key sync resets them for all voices at
+//! each note-on. Values are computed per sample.
 
 use crate::util::{Rng, TAU};
 
-/// Tempo-sync periods in 24-ppq ticks (96 = one bar), Synth1 table at 0x180073cf0.
+/// Tempo-sync periods in 24-ppq ticks (96 = one bar).
 pub const SYNC_TICKS: [u32; 30] =
     [1536, 1152, 864, 768, 576, 432, 384, 288, 216, 192, 144, 96, 84, 72, 48, 42, 36, 32, 24, 21, 18, 16, 12, 9, 8, 6, 4, 3, 2, 1];
 
@@ -91,7 +88,7 @@ impl Lfo {
     /// Return the current value, then advance by `n` samples.
     #[inline]
     pub fn tick_n(&mut self, wave: u8, sr: f32, n: usize) -> f32 {
-        // Synth1 slews the rate toward its target at 1 Hz/ms.
+        // Slew the rate toward its target at 1 Hz/ms.
         let step = 1000.0 * n as f32 / sr;
         let d = self.target_rate - self.rate;
         self.rate += d.clamp(-step, step);

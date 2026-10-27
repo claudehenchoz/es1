@@ -1,4 +1,4 @@
-//! ES 1: VST3 instrument. Synth1's architecture, a modern engine, a Braun face.
+//! ES 1: VST3 instrument. A virtual analog engine with a Braun face.
 
 mod params;
 mod ui;

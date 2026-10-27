@@ -1,13 +1,12 @@
-//! Envelope generators, after Synth1's `CEnvelopedObject`:
+//! Envelope generators:
 //!
 //! * attack is linear, retriggering from the current level;
 //! * decay and release follow `target + range · r · e^(8(r−1))` with `r = 1 − t/len`, reaching the
 //!   target exactly at `len` (or a linear ramp when `linear` is set, used by the FM mod env);
 //! * release length is fixed regardless of the level at note-off; the amp envelope finishes at
-//!   90 % of the release time (≈ −80 dB), as in Synth1.
+//!   90 % of the release time (≈ −80 dB).
 //!
-//! Synth1 evaluates these per chunk and ramps between; here the curve is evaluated per sample from
-//! a lookup table, so it is smooth at any block size.
+//! The curve is evaluated per sample from a lookup table, so it is smooth at any block size.
 
 /// Attack time in seconds for a 0..127 value: 0.5 ms .. 28 s.
 #[inline]

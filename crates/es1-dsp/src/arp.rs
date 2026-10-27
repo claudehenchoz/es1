@@ -1,6 +1,6 @@
-//! Arpeggiator (Synth1 `CArpeggiator`): up&down / up / down / random over the held notes
+//! Arpeggiator: up&down / up / down / random over the held notes
 //! (sorted by pitch) and 1..4 octaves, tempo-synced step length, gate as a fraction of a step.
-//! Like Synth1 it free-runs from the first key press (no host song-position alignment).
+//! It free-runs from the first key press (no host song-position alignment).
 
 use crate::params::ARP_TICKS;
 use crate::util::Rng;
