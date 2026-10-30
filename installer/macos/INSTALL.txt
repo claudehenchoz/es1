@@ -1,0 +1,22 @@
+ES 1 for macOS (Apple silicon and Intel, macOS 11 or newer)
+==========================================================
+
+The installer package (ES1-<version>-macos-universal.pkg) does all of this for you. To install
+by hand instead:
+
+1. Copy "ES 1.vst3" into /Library/Audio/Plug-Ins/VST3 (all users) or
+   ~/Library/Audio/Plug-Ins/VST3 (just you).
+
+2. ES 1 is not signed with an Apple Developer ID, so macOS quarantines it after download and
+   hosts refuse to load it. Clear the quarantine flag in Terminal:
+
+       xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/ES 1.vst3"
+
+   (use the ~/Library path if you put it there).
+
+3. Restart your host or rescan plugins.
+
+To uninstall, delete "ES 1.vst3" from that folder.
+
+ES 1 is free software under the GNU General Public License, version 3 or later; see LICENSE.
+The licenses of the libraries it uses are in ES 1.vst3/Contents/Resources/THIRD_PARTY_LICENSES.md.

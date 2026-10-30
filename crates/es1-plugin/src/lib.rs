@@ -194,5 +194,3 @@ impl Vst3Plugin for Es1 {
     const VST3_CLASS_ID: [u8; 16] = *b"ES1-ElektronSyn1";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
-
-nih_export_vst3!(Es1);

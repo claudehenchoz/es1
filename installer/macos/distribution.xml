@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Copyright (C) 2026 Claude Henchoz -->
+<!-- productbuild distribution for build-pkg.sh; @VERSION@ and @ID@ are filled in there. -->
+<installer-gui-script minSpecVersion="2">
+    <title>ES 1</title>
+    <welcome file="welcome.txt" mime-type="text/plain"/>
+    <!-- Universal binary: native on Intel and Apple silicon, so no Rosetta prompt. -->
+    <options customize="never" require-scripts="false" hostArchitectures="x86_64,arm64"/>
+    <domains enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="11.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="es1"/>
+    </choices-outline>
+    <choice id="es1" title="ES 1" visible="false">
+        <pkg-ref id="@ID@"/>
+    </choice>
+    <pkg-ref id="@ID@" version="@VERSION@" onConclusion="none">es1.pkg</pkg-ref>
+</installer-gui-script>

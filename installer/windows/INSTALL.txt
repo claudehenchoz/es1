@@ -1,0 +1,13 @@
+ES 1 for Windows (64-bit)
+=========================
+
+The installer (ES1-<version>-windows-x64-setup.exe) does all of this for you. To install by hand
+instead, copy the folder "ES 1.vst3" into
+
+    C:\Program Files\Common Files\VST3
+
+(administrator rights needed) or into the plugin folder your host scans, then restart your host
+or rescan plugins. To uninstall, delete that "ES 1.vst3" folder.
+
+ES 1 is free software under the GNU General Public License, version 3 or later; see LICENSE.
+The licenses of the libraries it uses are in ES 1.vst3\Contents\Resources\THIRD_PARTY_LICENSES.md.

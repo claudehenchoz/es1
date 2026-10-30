@@ -1,0 +1,11 @@
+ES 1 is a VST3 synthesizer.
+
+This installs ES 1.vst3 into /Library/Audio/Plug-Ins/VST3, where every VST3 host finds it.
+Restart your host or rescan plugins afterwards.
+
+ES 1 is free software, licensed under the GNU General Public License, version 3 or later. You do
+not need to accept the license to install or use ES 1; it grants you the rights to share and
+change the program. A copy is inside the plugin (ES 1.vst3/Contents/Resources/LICENSE) and at
+https://www.gnu.org/licenses/gpl-3.0.html.
+
+To uninstall, delete /Library/Audio/Plug-Ins/VST3/ES 1.vst3.

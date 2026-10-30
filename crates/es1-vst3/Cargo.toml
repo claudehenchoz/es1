@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Claude Henchoz
+
+# The VST3 binary. A crate of its own because Cargo applies LTO and stripping only to crates that
+# are not also built as a Rust library, and es1-plugin is one (for the standalone build).
+[package]
+name = "es1-vst3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+es1-plugin = { path = "../es1-plugin" }
+nih_plug.workspace = true

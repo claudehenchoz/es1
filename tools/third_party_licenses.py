@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "THIRD_PARTY_LICENSES.md"
-ROOT_CRATE = "es1-plugin"
+ROOT_CRATE = "es1-vst3"
 LICENSE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE", "AUTHORS")
 # Crates that keep license files outside the usual places: {crate name: [paths]}.
 EXTRA = {}

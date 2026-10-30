@@ -1,0 +1,21 @@
+ES 1 for Linux (x86-64)
+=======================
+
+Install for your user (into ~/.vst3):
+
+    ./install.sh
+
+or for all users (into /usr/lib/vst3):
+
+    sudo ./install.sh --system
+
+Then restart your host or rescan plugins. `./install.sh --uninstall` (with `--system` if you
+installed it that way) removes ES 1 again. Copying the folder "ES 1.vst3" into ~/.vst3 by hand
+works just as well.
+
+Requirements: x86-64, glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later), an X11
+or XWayland session with OpenGL. The patch import and save dialogs use the desktop's file chooser
+portal (xdg-desktop-portal), which GNOME, KDE and most other desktops provide.
+
+ES 1 is free software under the GNU General Public License, version 3 or later; see LICENSE.
+The licenses of the libraries it uses are in ES 1.vst3/Contents/Resources/THIRD_PARTY_LICENSES.md.

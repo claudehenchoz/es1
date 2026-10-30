@@ -1,0 +1,182 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Claude Henchoz
+
+# Builds ES 1 for Windows, macOS and Linux and publishes a GitHub release when a version tag
+# (v0.1.0, ...) is pushed. The tag must match the workspace version in Cargo.toml.
+# Run it by hand (Actions → Release → Run workflow) to build the packages without releasing;
+# they are then attached to the run as artifacts.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Check the tag against Cargo.toml
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          echo "Cargo.toml version: $version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the Cargo.toml version $version (expected v$version)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Build
+        shell: bash
+        run: |
+          python tools/third_party_licenses.py --target x86_64-pc-windows-msvc
+          cargo xtask bundle es1-vst3 --release --locked
+      - name: Zip
+        shell: bash
+        run: |
+          name="ES1-$VERSION-windows-x64"
+          mkdir -p "stage/$name" dist
+          cp -R "target/bundled/ES 1.vst3" "stage/$name/"
+          cp LICENSE installer/windows/INSTALL.txt "stage/$name/"
+          (cd stage && 7z a -tzip "../dist/$name.zip" "$name" > /dev/null)
+      - name: Installer
+        shell: pwsh
+        run: |
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $nsis)) {
+            choco install nsis --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $nsis /V2 "/DVERSION=$env:VERSION" `
+            "/DBUNDLE=$PWD\target\bundled\ES 1.vst3" `
+            "/DLICENSE=$PWD\LICENSE" `
+            "/DOUTFILE=$PWD\dist\ES1-$env:VERSION-windows-x64-setup.exe" `
+            installer\windows\es1.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal
+      - name: Targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Build (universal)
+        run: |
+          python3 tools/third_party_licenses.py --target aarch64-apple-darwin
+          cargo xtask bundle-universal es1-vst3 --release --locked
+          lipo -info "target/bundled/ES 1.vst3/Contents/MacOS/ES 1"
+          codesign --verify --strict --verbose "target/bundled/ES 1.vst3"
+      - name: Package
+        run: |
+          name="ES1-$VERSION-macos-universal"
+          mkdir -p "stage/$name" dist
+          ditto "target/bundled/ES 1.vst3" "stage/$name/ES 1.vst3"
+          cp LICENSE installer/macos/INSTALL.txt "stage/$name/"
+          ditto -c -k --keepParent "stage/$name" "dist/$name.zip"
+          sh installer/macos/build-pkg.sh "$VERSION" "target/bundled/ES 1.vst3" "dist/$name.pkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    # Built in Ubuntu 22.04 so the plugin needs only glibc 2.35: it runs on Ubuntu 22.04,
+    # Debian 12, Fedora 36 and anything newer.
+    container: ubuntu:22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git python3 build-essential pkg-config \
+            libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev libxcursor-dev libgl-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        shell: bash
+        run: rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Build
+        run: |
+          python3 tools/third_party_licenses.py --target x86_64-unknown-linux-gnu
+          cargo xtask bundle es1-vst3 --release --locked
+      - name: Package
+        run: |
+          name="ES1-$VERSION-linux-x64"
+          mkdir -p "stage/$name" dist
+          cp -R "target/bundled/ES 1.vst3" "stage/$name/"
+          cp LICENSE installer/linux/INSTALL.txt installer/linux/install.sh "stage/$name/"
+          chmod +x "stage/$name/install.sh"
+          tar -czf "dist/$name.tar.gz" -C stage "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        run: |
+          ls -l dist
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          sed "s/@VERSION@/$VERSION/g" installer/release-notes.md > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "ES 1 $VERSION" \
+            --notes-file notes.md --generate-notes --verify-tag

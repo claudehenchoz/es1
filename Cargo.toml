@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/es1-dsp", "crates/es1-presets", "crates/es1-plugin", "crates/es1-render", "xtask"]
+members = ["crates/es1-dsp", "crates/es1-presets", "crates/es1-plugin", "crates/es1-vst3", "crates/es1-render", "xtask"]
 exclude = ["vendor"]
 
 [workspace.package]
@@ -25,32 +25,24 @@ nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "d
 [patch."https://github.com/BillyDM/egui-baseview.git"]
 egui-baseview = { path = "vendor/egui-baseview" }
 
+# Optimised for size, except the engine and nih-plug's audio wrapper (opt-level 3 below).
+# Building the LTO root (es1-vst3, or es1-render for its benchmark) for size also came out faster
+# for the engine: `es1-render --bench` 3.05 s, against 3.50 s at opt-level 3 and 3.17 s for the
+# earlier thin-LTO, all-opt-level-3 profile. The per-package overrides name only non-root crates:
+# an override on the crate being linked makes Cargo drop `strip`.
 [profile.release]
 lto = "fat"
 codegen-units = 1
-opt-level = 3
+opt-level = "z"
 debug = false
 strip = true
 panic = "abort"
 
-# Optimise for size everywhere except the engine (es1-dsp, the workspace default of 3 above) and
-# nih-plug's audio wrapper. The plugin crate is the fat-LTO root: building it for size also came
-# out faster for the engine (`es1-render --bench`: 3.05 s at "z", 3.50 s at 3, 3.17 s with the
-# previous thin-LTO all-3 profile), so es1-render, its benchmark, is built the same way.
-[profile.release.package."*"]
-opt-level = "z"
+[profile.release.package.es1-dsp]
+opt-level = 3
 
 [profile.release.package.nih_plug]
 opt-level = 3
-
-[profile.release.package.es1-plugin]
-opt-level = "z"
-
-[profile.release.package.es1-presets]
-opt-level = "z"
-
-[profile.release.package.es1-render]
-opt-level = "z"
 
 [profile.profiling]
 inherits = "release"

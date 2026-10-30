@@ -7,16 +7,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lib]
-crate-type = ["cdylib", "lib"]
-
 [dependencies]
 es1-dsp.workspace = true
 es1-presets.workspace = true
 nih_plug.workspace = true
 nih_plug_egui.workspace = true
 parking_lot = "0.12"
-rfd = "0.16"
+rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "async-std"] }
 serde = { version = "1", features = ["derive"] }
 
 [features]
