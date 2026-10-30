@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Rams-style controls drawn directly with egui's painter and bound to nih-plug parameters.
 //!
 //! Every control fits the panel grid. A *line* is 22 px tall and holds keys, sliders and

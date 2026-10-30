@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Envelope generators:
 //!
 //! * attack is linear, retriggering from the current level;

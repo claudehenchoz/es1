@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Effect building blocks: biquads, one-poles, fractional delay lines.
 
 use core::f32::consts::PI;

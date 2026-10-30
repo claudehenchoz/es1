@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Material rendering: vertical gradients (light from above), soft cast shadows and the glass
 //! display. Gradient fills are plain meshes without feathering, so every one is finished with an
 //! anti-aliased outline drawn on top.

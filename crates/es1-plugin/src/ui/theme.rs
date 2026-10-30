@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Braun / Dieter Rams palettes, type and the persisted light/dark preference.
 //!
 //! Light: the warm grey bodies of the T 1000 / RT 20. Dark: the black finishes of the ET 66 and
@@ -157,6 +160,11 @@ pub fn heading_font() -> FontId {
 
 pub fn title_font() -> FontId {
     FontId::new(22.0, FontFamily::Name("heading".into()))
+}
+
+/// The header wordmark: sized so "ES 1" and its subtitle fill the space left of the display.
+pub fn wordmark_font() -> FontId {
+    FontId::new(36.0, FontFamily::Name("heading".into()))
 }
 
 // ---- persisted preference -------------------------------------------------------------------

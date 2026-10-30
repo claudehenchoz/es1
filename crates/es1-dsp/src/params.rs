@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! The parameter set, keyed by `.sy1` patch-format index: names, ranges, the defaults of the
 //! "initial sound" template, and the conversion of files written by older format versions
 //! (100..111).

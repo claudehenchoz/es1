@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! ES 1 editor. "Weniger, aber besser".
 //!
 //! The panel is a fixed grid of tiles in five rows that follow the signal flow:
@@ -59,6 +62,8 @@ struct UiState {
     tween: Option<Tween>,
     /// A file dialog running on its worker thread.
     dialog: Option<Dialog>,
+    /// The about panel (legal notices) is open.
+    about: bool,
     scope: scope::ScopeView,
 }
 
@@ -84,6 +89,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             message: None,
             tween: None,
             dialog: None,
+            about: false,
             scope: scope::ScopeView::default(),
         },
         move |ctx, st| {
@@ -114,13 +120,16 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
                     panel(ui, &cx, pos2(origin.x, body_top));
                 }
             });
+            if st.about {
+                about(ctx, st);
+            }
         },
     )
 }
 
 /// Debug builds only: `ES1_UI_SELFTEST=step` steps to the next program 1.5 s after opening, so
 /// the preset tween can be captured; `=popup` opens the LFO 1 destination list; `=browser`
-/// opens the program browser; `=import` presses the import key.
+/// opens the program browser; `=about` the about panel; `=import` presses the import key.
 #[cfg(debug_assertions)]
 fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
     let Ok(mode) = std::env::var("ES1_UI_SELFTEST") else { return };
@@ -139,6 +148,7 @@ fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut 
             }
             "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
             "browser" => st.browser = true,
+            "about" => st.about = true,
             // `import` opens the file dialog; with ES1_UI_IMPORT=<path> it imports that file directly.
             "import" => match std::env::var_os("ES1_UI_IMPORT") {
                 Some(path) => import(params, shared, setter, st, std::path::Path::new(&path)),
@@ -749,10 +759,15 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
     let h = ui.max_rect();
     let mid = h.center().y;
 
-    // Wordmark.
+    // Wordmark; a click opens the about panel.
+    let mark = Rect::from_min_size(pos2(h.left(), mid - 22.0), vec2(DISPLAY_X - 16.0, 44.0));
+    let resp = ui.interact(mark, ui.id().with("wordmark"), Sense::click()).on_hover_text("about ES 1");
+    if resp.clicked() {
+        st.about = !st.about;
+    }
     let p = ui.painter();
-    p.text(pos2(h.left(), mid - 8.0), Align2::LEFT_CENTER, "ES 1", title_font(), pl.ink);
-    p.text(pos2(h.left() + 1.0, mid + 14.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
+    p.text(pos2(h.left() - 1.0, mid - 7.0), Align2::LEFT_CENTER, "ES 1", wordmark_font(), pl.ink);
+    p.text(pos2(h.left() + 1.0, mid + 19.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
 
     // Display.
     let d = Rect::from_min_size(pos2(h.left() + DISPLAY_X, mid - 26.0), vec2(DISPLAY_W, 52.0));
@@ -809,6 +824,42 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
             }
         }
     });
+}
+
+/// About panel: the "Appropriate Legal Notices" the GPL asks an interactive program to show.
+fn about(ctx: &egui::Context, st: &mut UiState) {
+    let pl = pal();
+    let screen = ctx.screen_rect();
+    // Dim the panel; a click outside the card (or Escape) closes it.
+    let dim = egui::Area::new(egui::Id::new("es1-about-dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+        let (r, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
+        ui.painter().rect_filled(r, 0.0, egui::Color32::from_black_alpha(if is_dark() { 120 } else { 70 }));
+        resp.clicked()
+    });
+    let w = 460.0;
+    let card = Rect::from_center_size(screen.center(), vec2(w, 250.0));
+    egui::Area::new(egui::Id::new("es1-about")).order(egui::Order::Tooltip).fixed_pos(card.min).show(ctx, |ui| {
+        tile_face(ui.painter(), card);
+        let inner = card.shrink(20.0);
+        ui.scope_builder(UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(RichText::new("ES 1").font(title_font()).color(pl.ink));
+            ui.label(RichText::new(format!("elektronischer synthesizer, version {}", env!("CARGO_PKG_VERSION"))).font(small_font()).color(pl.ink_soft));
+            ui.add_space(6.0);
+            ui.label(RichText::new("Copyright (C) 2026 Claude Henchoz").font(label_font()).color(pl.ink));
+            ui.add_space(2.0);
+            for t in [
+                "ES 1 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.",
+                "ES 1 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+                "The license (LICENSE) and the licenses of the libraries ES 1 uses (THIRD_PARTY_LICENSES.md) are in the plugin bundle, under Contents/Resources, and at https://www.gnu.org/licenses/.",
+            ] {
+                ui.label(RichText::new(t).font(small_font()).color(pl.ink_soft));
+            }
+        });
+    });
+    if dim.inner || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        st.about = false;
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

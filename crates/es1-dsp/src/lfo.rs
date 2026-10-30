@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Global LFOs. Both LFOs are shared by every voice; key sync resets them for all voices at
 //! each note-on. Values are computed per sample.
 

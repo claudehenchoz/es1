@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Claude Henchoz
+
 """Generate the ES 1 factory bank (presets/factory/NNN.sy1).
 
 Every sound is written in musical units (Hz, seconds, semitones, octaves) and converted to the

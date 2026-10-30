@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Output scope in the header display, in the manner of the minilogue's OLED: one bright trace
 //! on black, steady on a held note.
 //!

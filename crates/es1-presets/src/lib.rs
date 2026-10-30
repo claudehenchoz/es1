@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! `.sy1` patch files and the embedded ES 1 factory bank.
 //!
 //! Format:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Embed `presets/factory/NNN.sy1` into the binary, in file-name order.
 use std::{env, fs, path::PathBuf};
 

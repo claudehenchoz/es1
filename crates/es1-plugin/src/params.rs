@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Host-facing parameters, generated from the engine's parameter table (`es1_dsp::PARAMS`).
 //!
 //! * knobs → `FloatParam` in sy1 units (0..127),

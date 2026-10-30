@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! One synth voice: oscillators (incl. 8-way osc 1 detune and sub), mod envelope, filter with
 //! its ADSR, post-filter limiter/saturation and the amp ADSR, with band-limited oscillators and
 //! ZDF filters.

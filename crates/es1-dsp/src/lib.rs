@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! ES 1 synthesis engine.
 //!
 //! A two-oscillator virtual analog with band-limited oscillators and zero-delay-feedback

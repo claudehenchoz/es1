@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! The complete instrument: parameter dispatch, keyboard, voice
 //! allocation, unison, portamento, LFOs, MIDI-controller modulation, arpeggiator, master
 //! effects and volume.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Claude Henchoz
+
 //! Zero-delay-feedback voice filters.
 //!
 //! * `Lp12` / `Hp12` / `Bp12`: Cytomic (Andrew Simper) trapezoidal SVF.
