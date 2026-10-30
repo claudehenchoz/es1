@@ -24,8 +24,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "THIRD_PARTY_LICENSES.md"
 ROOT_CRATE = "es1-plugin"
 LICENSE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE", "AUTHORS")
-# Crates that keep license files outside the usual places.
-EXTRA = {"epaint_default_fonts": ["fonts/OFL.txt", "fonts/UFL.txt", "fonts/Hack-Regular.txt", "fonts/emoji-icon-font-mit-license.txt"]}
+# Crates that keep license files outside the usual places: {crate name: [paths]}.
+EXTRA = {}
 
 MIT = """Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 and associated documentation files (the "Software"), to deal in the Software without
@@ -144,15 +144,13 @@ def main():
         "GPL-3.0-or-later. Each crate's own license files follow; texts shared by several crates are",
         "printed once at the end and referenced by id.",
         "",
-        "The fonts in `epaint_default_fonts` (Ubuntu Light, Hack, Noto Emoji, emoji-icon-font) are",
-        "embedded in the plugin as data under their own licenses (Ubuntu Font Licence 1.0, MIT and",
-        "Bitstream Vera, SIL Open Font License 1.1), which permit bundling them with any software.",
-        "",
         "| Crate | Version | License | Source | License files |",
         "|---|---|---|---|---|",
     ]
     for p, refs in entries:
         src = p.get("repository") or ""
+        if p["source"] is None:  # a path dependency: the patched copy in vendor/
+            src += " (modified copy in `vendor/`)"
         files = ", ".join(f"{n} [{h}](#{h})" for n, h in refs) or "(none shipped)"
         lines.append(f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {src} | {files} |")
     lines += ["", "## Copyright holders (from crate metadata)", ""]

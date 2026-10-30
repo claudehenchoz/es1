@@ -4,6 +4,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/es1-dsp", "crates/es1-presets", "crates/es1-plugin", "crates/es1-render", "xtask"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,15 +16,44 @@ authors = ["Claude Henchoz"]
 es1-dsp = { path = "crates/es1-dsp" }
 es1-presets = { path = "crates/es1-presets" }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683", default-features = false, features = ["vst3", "assert_process_allocs"] }
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
+# Without egui's embedded fonts (1.4 MB); the editor loads system fonts instead.
+nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683", default-features = false, features = ["opengl"] }
 nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug.git", rev = "de421011f41a6d10fc8c7a6084e4f4dee0143683" }
 
+# egui-baseview at the revision nih_plug_egui pins, with egui's embedded fonts (1.4 MB) left out
+# of its default features; see vendor/README.md.
+[patch."https://github.com/BillyDM/egui-baseview.git"]
+egui-baseview = { path = "vendor/egui-baseview" }
+
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 opt-level = 3
 debug = false
+strip = true
+panic = "abort"
+
+# Optimise for size everywhere except the engine (es1-dsp, the workspace default of 3 above) and
+# nih-plug's audio wrapper. The plugin crate is the fat-LTO root: building it for size also came
+# out faster for the engine (`es1-render --bench`: 3.05 s at "z", 3.50 s at 3, 3.17 s with the
+# previous thin-LTO all-3 profile), so es1-render, its benchmark, is built the same way.
+[profile.release.package."*"]
+opt-level = "z"
+
+[profile.release.package.nih_plug]
+opt-level = 3
+
+[profile.release.package.es1-plugin]
+opt-level = "z"
+
+[profile.release.package.es1-presets]
+opt-level = "z"
+
+[profile.release.package.es1-render]
+opt-level = "z"
 
 [profile.profiling]
 inherits = "release"
 debug = true
+strip = false
+

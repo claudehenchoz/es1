@@ -10,4 +10,6 @@ license.workspace = true
 
 [dependencies]
 es1-dsp.workspace = true
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# Reading only needs flate2's inflate; the "deflate" feature would also link zopfli, a compressor.
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

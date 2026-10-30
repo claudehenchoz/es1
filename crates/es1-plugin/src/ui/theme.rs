@@ -195,33 +195,31 @@ pub fn set_dark(ctx: &egui::Context, dark: bool) {
 
 // ---- fonts / visuals --------------------------------------------------------------------------
 
-/// Prefer a neo-grotesk from the system (Segoe UI on Windows, Helvetica Neue / Arial elsewhere),
-/// falling back to egui's built-in font.
+/// All text uses system fonts; egui's embedded fonts are not linked (see `vendor/README.md`).
+/// A neo-grotesk (Segoe UI on Windows, Arial / Liberation Sans elsewhere), a monospace for
+/// values, and a symbol font as the last fallback for glyphs the others lack.
 pub fn install_fonts(ctx: &egui::Context) {
-    let mut defs = FontDefinitions::default();
-    let try_load = |paths: &[&str]| paths.iter().find_map(|p| std::fs::read(p).ok());
-    let regular = try_load(&[
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ]);
-    let heading = try_load(&[
-        "C:\\Windows\\Fonts\\seguisb.ttf",
-        "C:\\Windows\\Fonts\\segoeuib.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ]);
-    if let Some(r) = regular {
-        defs.font_data.insert("es1-regular".into(), Arc::new(FontData::from_owned(r)));
-        defs.families.entry(FontFamily::Proportional).or_default().insert(0, "es1-regular".into());
+    let win = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into()) + "\\Fonts\\";
+    let w = |f: &str| win.clone() + f;
+    let fonts: [(&str, Vec<String>); 4] = [
+        ("regular", vec![w("segoeui.ttf"), "/System/Library/Fonts/Supplemental/Arial.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf".into()]),
+        ("heading", vec![w("seguisb.ttf"), w("segoeuib.ttf"), "/System/Library/Fonts/Supplemental/Arial Bold.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf".into()]),
+        ("mono", vec![w("consola.ttf"), "/System/Library/Fonts/Menlo.ttc".into(), "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf".into()]),
+        ("symbol", vec![w("seguisym.ttf"), "/System/Library/Fonts/Apple Symbols.ttf".into(), "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into()]),
+    ];
+    let mut defs = FontDefinitions::empty();
+    for (name, paths) in fonts {
+        if let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) {
+            defs.font_data.insert(name.into(), Arc::new(FontData::from_owned(bytes)));
+        }
     }
-    let mut heading_fam = Vec::new();
-    if let Some(h) = heading {
-        defs.font_data.insert("es1-heading".into(), Arc::new(FontData::from_owned(h)));
-        heading_fam.push("es1-heading".to_string());
-    }
-    heading_fam.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
-    defs.families.insert(FontFamily::Name("heading".into()), heading_fam);
+    let family = |order: &[&str]| -> Vec<String> {
+        order.iter().filter(|n| defs.font_data.contains_key(**n)).map(|n| n.to_string()).collect()
+    };
+    let (prop, mono, heading) = (family(&["regular", "symbol"]), family(&["mono", "regular", "symbol"]), family(&["heading", "regular", "symbol"]));
+    defs.families.insert(FontFamily::Proportional, prop);
+    defs.families.insert(FontFamily::Monospace, mono);
+    defs.families.insert(FontFamily::Name("heading".into()), heading);
     ctx.set_fonts(defs);
 }
 

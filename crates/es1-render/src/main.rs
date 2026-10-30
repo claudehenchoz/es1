@@ -105,7 +105,7 @@ fn render(p: &Sy1Patch, sr: f32, chord: bool) -> (Vec<f32>, Vec<f32>, Stats) {
 /// Worst-case CPU: 32 voices, each with the 9-oscillator osc 1 detune, sub, FM and LP DL filter.
 fn bench(sr: f32) {
     let mut s = Synth::new(sr);
-    let p = factory_bank().patches[81].clone(); // Saw lead
+    let p = factory_bank().patches[10].clone(); // Weniger aber Lead
     s.load_values(&p.to_values());
     for (i, v) in [(38, 0.0), (94, 32.0), (73, 1.0), (93, 8.0), (76, 60.0), (95, 80.0), (45, 30.0), (14, 4.0), (25, 0.0), (27, 127.0)] {
         s.set_param(i, v);
