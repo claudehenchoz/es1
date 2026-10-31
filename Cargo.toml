@@ -7,7 +7,7 @@ members = ["crates/es1-dsp", "crates/es1-presets", "crates/es1-plugin", "crates/
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.4.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 authors = ["Claude Henchoz"]

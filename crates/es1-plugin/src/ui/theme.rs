@@ -4,10 +4,11 @@
 //! Braun / Dieter Rams palettes, type and the persisted light/dark preference.
 //!
 //! Light: the warm grey bodies of the T 1000 / RT 20. Dark: the black finishes of the ET 66 and
-//! the Regie series. Both share a single signal orange (used only for selection and values in
-//! motion) and the green "on" lamp.
+//! the Regie series. Both are dark ink on a light face (or the reverse) with one accent, signal
+//! orange, kept for the primary controls, the selection and values in motion.
 
-use nih_plug_egui::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
+use nih_plug_egui::egui::text::LayoutJob;
+use nih_plug_egui::egui::{self, vec2, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke, TextFormat, Visuals};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -49,7 +50,6 @@ pub struct Palette {
     pub key_sel: Color32,
     pub key_sel_fg: Color32,
     pub orange: Color32,
-    pub green: Color32,
     pub display_bg: Color32,
     pub display_fg: Color32,
     pub display_dim: Color32,
@@ -84,7 +84,6 @@ pub static LIGHT: Palette = Palette {
     key_sel: Color32::from_rgb(0x2E, 0x2D, 0x2B),
     key_sel_fg: Color32::from_rgb(0xF6, 0xF4, 0xEF),
     orange: Color32::from_rgb(0xE5, 0x5B, 0x17),
-    green: Color32::from_rgb(0x3D, 0xA9, 0x4C),
     display_bg: Color32::from_rgb(0x1E, 0x1F, 0x1D),
     display_fg: Color32::from_rgb(0xF1, 0xEE, 0xE6),
     display_dim: Color32::from_rgb(0x8A, 0x87, 0x80),
@@ -119,7 +118,6 @@ pub static DARK: Palette = Palette {
     key_sel: Color32::from_rgb(0xE6, 0xE2, 0xDA),
     key_sel_fg: Color32::from_rgb(0x1E, 0x1E, 0x1C),
     orange: Color32::from_rgb(0xEE, 0x67, 0x22),
-    green: Color32::from_rgb(0x52, 0xC2, 0x5F),
     display_bg: Color32::from_rgb(0x0D, 0x0D, 0x0C),
     display_fg: Color32::from_rgb(0xF1, 0xEE, 0xE6),
     display_dim: Color32::from_rgb(0x7E, 0x7B, 0x74),
@@ -151,7 +149,7 @@ pub fn small_font() -> FontId {
 }
 
 pub fn value_font() -> FontId {
-    FontId::new(10.5, FontFamily::Monospace)
+    FontId::new(10.5, FontFamily::Proportional)
 }
 
 pub fn heading_font() -> FontId {
@@ -195,32 +193,53 @@ pub fn set_dark(ctx: &egui::Context, dark: bool) {
 
 // ---- fonts / visuals --------------------------------------------------------------------------
 
-/// All text uses system fonts; egui's embedded fonts are not linked (see `vendor/README.md`).
-/// A neo-grotesk (Segoe UI on Windows, Arial / Liberation Sans elsewhere), a monospace for
-/// values, and a symbol font as the last fallback for glyphs the others lack.
+/// Aileron by Sora Sagano (CC0, see `assets/fonts/`), embedded so the panel looks the same on
+/// every system. One family in two weights: Regular for labels and values (its figures are
+/// tabular, so changing numbers do not shift), SemiBold for headings and the wordmark.
+static AILERON_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Aileron-Regular.otf");
+static AILERON_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Aileron-SemiBold.otf");
+
 pub fn install_fonts(ctx: &egui::Context) {
-    let win = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into()) + "\\Fonts\\";
-    let w = |f: &str| win.clone() + f;
-    let fonts: [(&str, Vec<String>); 4] = [
-        ("regular", vec![w("segoeui.ttf"), "/System/Library/Fonts/Supplemental/Arial.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf".into()]),
-        ("heading", vec![w("seguisb.ttf"), w("segoeuib.ttf"), "/System/Library/Fonts/Supplemental/Arial Bold.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf".into()]),
-        ("mono", vec![w("consola.ttf"), "/System/Library/Fonts/Menlo.ttc".into(), "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".into(), "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf".into()]),
-        ("symbol", vec![w("seguisym.ttf"), "/System/Library/Fonts/Apple Symbols.ttf".into(), "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into()]),
-    ];
     let mut defs = FontDefinitions::empty();
-    for (name, paths) in fonts {
-        if let Some(bytes) = paths.iter().find_map(|p| std::fs::read(p).ok()) {
-            defs.font_data.insert(name.into(), Arc::new(FontData::from_owned(bytes)));
-        }
-    }
-    let family = |order: &[&str]| -> Vec<String> {
-        order.iter().filter(|n| defs.font_data.contains_key(**n)).map(|n| n.to_string()).collect()
-    };
-    let (prop, mono, heading) = (family(&["regular", "symbol"]), family(&["mono", "regular", "symbol"]), family(&["heading", "regular", "symbol"]));
-    defs.families.insert(FontFamily::Proportional, prop);
-    defs.families.insert(FontFamily::Monospace, mono);
-    defs.families.insert(FontFamily::Name("heading".into()), heading);
+    defs.font_data.insert("regular".into(), Arc::new(FontData::from_static(AILERON_REGULAR)));
+    defs.font_data.insert("semibold".into(), Arc::new(FontData::from_static(AILERON_SEMIBOLD)));
+    defs.families.insert(FontFamily::Proportional, vec!["regular".into()]);
+    defs.families.insert(FontFamily::Monospace, vec!["regular".into()]);
+    defs.families.insert(FontFamily::Name("heading".into()), vec!["semibold".into(), "regular".into()]);
     ctx.set_fonts(defs);
+}
+
+/// Extra space between letters: tiny labels are tracked out, larger type is set as drawn.
+pub fn tracking(font: &FontId) -> f32 {
+    if font.size <= 10.0 {
+        0.8
+    } else if font.size <= 11.0 {
+        0.4
+    } else {
+        0.0
+    }
+}
+
+/// A single line of text in `font`, letterspaced by [`tracking`].
+pub fn spaced(text: impl Into<String>, font: FontId, color: Color32) -> LayoutJob {
+    let extra_letter_spacing = tracking(&font);
+    LayoutJob::single_section(text.into(), TextFormat { font_id: font, color, extra_letter_spacing, ..Default::default() })
+}
+
+/// Width of `text` as [`put_text`] draws it.
+pub fn text_width(ctx: &egui::Context, text: &str, font: FontId) -> f32 {
+    let sp = tracking(&font);
+    ctx.fonts(|f| f.layout_job(spaced(text, font, Color32::WHITE)).size().x) - sp
+}
+
+/// `Painter::text` with letterspacing. The spacing egui adds after the last letter is left out
+/// when the text is aligned, so centred and right-aligned labels sit where they should.
+pub fn put_text(painter: &Painter, pos: Pos2, anchor: Align2, text: impl ToString, font: FontId, color: Color32) -> Rect {
+    let sp = tracking(&font);
+    let galley = painter.layout_job(spaced(text.to_string(), font, color));
+    let rect = anchor.anchor_size(pos, galley.size() - vec2(sp, 0.0));
+    painter.galley(rect.min, galley, color);
+    rect
 }
 
 pub fn apply(ctx: &egui::Context) {
@@ -246,4 +265,24 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(U, U * 0.5);
     style.spacing.button_padding = egui::vec2(U, U * 0.375);
     ctx.set_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aileron_covers_the_panel_text() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let _ = ctx.run(Default::default(), |_| {});
+        let text = "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,:;-+/&()%'\"‹›×±−·≈…° äöüßéèàçñ";
+        for font in [label_font(), small_font(), value_font(), heading_font(), wordmark_font()] {
+            ctx.fonts(|f| {
+                for c in text.chars() {
+                    assert!(f.has_glyph(&font, c), "{c:?} missing in {font:?}");
+                }
+            });
+        }
+    }
 }

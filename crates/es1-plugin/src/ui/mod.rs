@@ -321,7 +321,7 @@ fn panel(ui: &mut Ui, cx: &Cx, origin: egui::Pos2) {
             let w = w + extra;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, TILE_H));
             tile_face(ui.painter(), r);
-            ui.painter().text(pos2(r.left() + TILE_PAD, r.top() + 16.0), Align2::LEFT_CENTER, title, heading_font(), pl.ink);
+            put_text(ui.painter(), pos2(r.left() + TILE_PAD, r.top() + 16.0), Align2::LEFT_CENTER, title, heading_font(), pl.ink);
             if let Some(sy1) = power_sy1 {
                 let pr = Rect::from_min_size(pos2(r.right() - TILE_PAD - 44.0, r.top() + 7.0), vec2(44.0, 18.0));
                 power(ui, cx.b(sy1), cx.s, pr);
@@ -482,17 +482,17 @@ fn tile(ui: &mut Ui, cx: &Cx, t: T, l1: Rect, l2: Rect) {
             let slot2 = Rect::from_min_size(pos2(l2.left(), l2.top() + 4.0), vec2(l2.width(), LINE_H));
             for (r, src, dst, amt, n) in [(l1, 86, 87, 50, "1"), (slot2, 88, 89, 51, "2")] {
                 put(ui, r, 6.0, |ui| {
-                    ui.label(RichText::new(n).font(small_font()).color(pal().ink_soft));
+                    ui.label(RichText::new(n).font(small_font()).extra_letter_spacing(tracking(&small_font())).color(pal().ink_soft));
                     cx.drop_line(ui, src, 100.0);
-                    ui.label(RichText::new("→").font(label_font()).color(pal().ink_soft));
+                    arrow(ui);
                     dropdown(ui, cx.i(dst), cx.s, None, &targets, 132.0);
                     hslider(ui, cx.f(amt), cx.s, 96.0, "-", "+", true);
                 });
             }
-            ui.painter().text(
+            put_text(ui.painter(), 
                 pos2(l2.left(), l2.bottom() - 7.0),
                 Align2::LEFT_CENTER,
-                "midi source → parameter, with amount",
+                "midi source to parameter, with amount",
                 small_font(),
                 pal().ink_soft,
             );
@@ -735,6 +735,16 @@ fn import(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut Ui
 // Header: wordmark, display, transport keys, theme, master volume
 // ---------------------------------------------------------------------------------------------
 
+/// A small right arrow on a line, drawn (Aileron has no arrow glyph).
+fn arrow(ui: &mut Ui) {
+    let (r, _) = ui.allocate_exact_size(vec2(12.0, LINE_H), Sense::hover());
+    let (c, s) = (r.center(), Stroke::new(1.0, pal().ink_soft));
+    let p = ui.painter();
+    p.line_segment([c - vec2(5.0, 0.0), c + vec2(5.0, 0.0)], s);
+    p.line_segment([c + vec2(2.0, -3.0), c + vec2(5.0, 0.0)], s);
+    p.line_segment([c + vec2(2.0, 3.0), c + vec2(5.0, 0.0)], s);
+}
+
 fn key(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
     let pl = pal();
     let (r, resp) = ui.allocate_exact_size(vec2(w, LINE_H), Sense::click());
@@ -745,7 +755,7 @@ fn key(ui: &mut Ui, text: &str, w: f32) -> egui::Response {
     } else {
         raised(&painter, r, 3.0, edge);
     }
-    painter.text(r.center(), Align2::CENTER_CENTER, text, label_font(), pl.ink);
+    put_text(&painter, r.center(), Align2::CENTER_CENTER, text, label_font(), pl.ink);
     resp
 }
 
@@ -766,8 +776,8 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
         st.about = !st.about;
     }
     let p = ui.painter();
-    p.text(pos2(h.left() - 1.0, mid - 7.0), Align2::LEFT_CENTER, "ES 1", wordmark_font(), pl.ink);
-    p.text(pos2(h.left() + 1.0, mid + 19.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
+    put_text(&p, pos2(h.left() - 1.0, mid - 7.0), Align2::LEFT_CENTER, "ES 1", wordmark_font(), pl.ink);
+    put_text(&p, pos2(h.left() + 1.0, mid + 19.0), Align2::LEFT_CENTER, "elektronischer synthesizer", small_font(), pl.ink_soft);
 
     // Display.
     let d = Rect::from_min_size(pos2(h.left() + DISPLAY_X, mid - 26.0), vec2(DISPLAY_W, 52.0));
@@ -779,14 +789,14 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
         (s.name.clone(), s.bank, s.program)
     };
     let num = if num == NO_PROGRAM { "---".to_string() } else { format!("{:03}", num + 1) };
-    p.text(pos2(prog.left() + 14.0, prog.top() + 20.0), Align2::LEFT_CENTER, num, value_font(), pl.orange);
-    p.text(pos2(prog.left() + 48.0, prog.top() + 20.0), Align2::LEFT_CENTER, &name, egui::FontId::proportional(17.0), pl.display_fg);
+    put_text(&p, pos2(prog.left() + 14.0, prog.top() + 20.0), Align2::LEFT_CENTER, num, value_font(), pl.orange);
+    put_text(&p, pos2(prog.left() + 48.0, prog.top() + 20.0), Align2::LEFT_CENTER, &name, egui::FontId::proportional(17.0), pl.display_fg);
     let bank_name = st.banks.get(bank).map(|b| b.name.to_lowercase()).unwrap_or_default();
     let info = st.message.clone().unwrap_or(bank_name);
-    p.text(pos2(prog.left() + 48.0, prog.bottom() - 12.0), Align2::LEFT_CENTER, info, small_font(), pl.display_dim);
+    put_text(&p, pos2(prog.left() + 48.0, prog.bottom() - 12.0), Align2::LEFT_CENTER, info, small_font(), pl.display_dim);
     let voices = shared.active_voices.load(Ordering::Relaxed);
     let vtext = if voices == 1 { "1 voice".to_string() } else { format!("{voices} voices") };
-    p.text(pos2(prog.right() - 14.0, prog.bottom() - 12.0), Align2::RIGHT_CENTER, vtext, small_font(), pl.display_dim);
+    put_text(&p, pos2(prog.right() - 14.0, prog.bottom() - 12.0), Align2::RIGHT_CENTER, vtext, small_font(), pl.display_dim);
     let div = prog.right();
     ui.painter().line_segment([pos2(div, d.top() + 9.0), pos2(div, d.bottom() - 9.0)], Stroke::new(1.0, pl.display_dim.gamma_multiply(0.35)));
     let scope_r = Rect::from_min_max(pos2(div + 12.0, d.top() + 7.0), pos2(d.right() - 12.0, d.bottom() - 7.0));
@@ -805,10 +815,10 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
         if key(ui, if st.browser { "panel" } else { "programs" }, 76.0).clicked() {
             st.browser = !st.browser;
         }
-        if key(ui, "import", 56.0).on_hover_text("Load a .sy1 patch or a .zip bank").clicked() {
+        if key(ui, "import", 56.0).on_hover_text("load a .sy1 patch or a .zip bank").clicked() {
             start_import(st);
         }
-        if key(ui, "save", 48.0).on_hover_text("Save the current sound as a .sy1 file").clicked() {
+        if key(ui, "save", 48.0).on_hover_text("save the current sound as a .sy1 file").clicked() {
             start_save(cx.p, st);
         }
     });
@@ -875,8 +885,8 @@ fn browser(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, area: Rect) 
     for r in [banks_r, progs_r] {
         tile_face(ui.painter(), r);
     }
-    ui.painter().text(pos2(banks_r.left() + TILE_PAD, banks_r.top() + 16.0), Align2::LEFT_CENTER, "banks", heading_font(), pl.ink);
-    ui.painter().text(pos2(progs_r.left() + TILE_PAD, progs_r.top() + 16.0), Align2::LEFT_CENTER, "programs", heading_font(), pl.ink);
+    put_text(ui.painter(), pos2(banks_r.left() + TILE_PAD, banks_r.top() + 16.0), Align2::LEFT_CENTER, "banks", heading_font(), pl.ink);
+    put_text(ui.painter(), pos2(progs_r.left() + TILE_PAD, progs_r.top() + 16.0), Align2::LEFT_CENTER, "programs", heading_font(), pl.ink);
 
     let inner = |r: Rect| Rect::from_min_max(pos2(r.left() + TILE_PAD, r.top() + TILE_HEAD + 4.0), pos2(r.right() - TILE_PAD, r.bottom() - TILE_PAD));
     let mut remove = None;
@@ -891,8 +901,8 @@ fn browser(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, area: Rect) 
                     ui.painter().rect_filled(cell, CornerRadius::same(3), pl.key);
                 }
                 let col = if sel { pl.key_sel_fg } else { pl.ink };
-                ui.painter().text(pos2(cell.left() + 8.0, cell.center().y), Align2::LEFT_CENTER, b.name.to_lowercase(), label_font(), col);
-                ui.painter().text(pos2(cell.right() - 8.0, cell.center().y), Align2::RIGHT_CENTER, b.patches.len().to_string(), small_font(), col);
+                put_text(ui.painter(), pos2(cell.left() + 8.0, cell.center().y), Align2::LEFT_CENTER, b.name.to_lowercase(), label_font(), col);
+                put_text(ui.painter(), pos2(cell.right() - 8.0, cell.center().y), Align2::RIGHT_CENTER, b.patches.len().to_string(), small_font(), col);
                 if resp.clicked() {
                     st.bank_sel = i;
                 }
@@ -932,8 +942,8 @@ fn browser(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, area: Rect) 
                                 ui.painter().rect_filled(cell.shrink2(vec2(2.0, 1.0)), CornerRadius::same(3), pl.key);
                             }
                             let num_col = if sel { pl.orange } else { pl.ink_soft };
-                            ui.painter().text(pos2(cell.left() + 6.0, cell.center().y), Align2::LEFT_CENTER, format!("{:03}", i + 1), value_font(), num_col);
-                            ui.painter().text(pos2(cell.left() + 36.0, cell.center().y), Align2::LEFT_CENTER, &p.name, label_font(), if sel { pl.orange } else { pl.ink });
+                            put_text(ui.painter(), pos2(cell.left() + 6.0, cell.center().y), Align2::LEFT_CENTER, format!("{:03}", i + 1), value_font(), num_col);
+                            put_text(ui.painter(), pos2(cell.left() + 36.0, cell.center().y), Align2::LEFT_CENTER, &p.name, label_font(), if sel { pl.orange } else { pl.ink });
                             if resp.clicked() {
                                 clicked = Some(i);
                             }

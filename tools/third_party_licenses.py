@@ -153,6 +153,15 @@ def main():
             src += " (modified copy in `vendor/`)"
         files = ", ".join(f"{n} [{h}](#{h})" for n, h in refs) or "(none shipped)"
         lines.append(f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {src} | {files} |")
+    lines += [
+        "",
+        "## Fonts",
+        "",
+        "The editor embeds Aileron Regular and Aileron SemiBold (version 1.102) by Sora Sagano,",
+        "dedicated to the public domain under CC0 1.0 Universal",
+        "(https://creativecommons.org/publicdomain/zero/1.0/). The dedication is in",
+        "`crates/es1-plugin/assets/fonts/LICENSE-CC0.txt` in the source code.",
+    ]
     lines += ["", "## Copyright holders (from crate metadata)", ""]
     for p, _ in entries:
         authors = ", ".join(a.split(" <")[0] for a in p.get("authors") or []) or "the authors"

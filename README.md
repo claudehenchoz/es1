@@ -162,8 +162,8 @@ from left to right and from top to bottom:
 | 4 | voice, unison, controllers |
 | 5 | effect, equalizer, delay, chorus / flanger |
 
-Some sections have a lamp switch at the right of the section name. When the lamp is green, the
-section is on.
+Some sections have a lamp switch at the right of the section name. When the lamp is a solid
+dot, the section is on. When the lamp is an empty ring, the section is off.
 
 ## 6. How to operate the controls
 
@@ -577,7 +577,7 @@ and Linux. Then it publishes a GitHub release. The workflow starts when you push
 3. Push the tag:
 
    ```sh
-   git tag v0.1.0 && git push origin v0.1.0
+   git tag v0.4.1 && git push origin v0.4.1
    ```
 
 If you start the workflow manually, it builds the packages but does not publish a release. The
@@ -604,7 +604,8 @@ ES 1 uses these published DSP designs:
 ES 1 is built on [nih-plug](https://github.com/robbert-vdh/nih-plug) (Robbert van der Helm),
 [egui](https://github.com/emilk/egui) (Emil Ernerfeldt),
 [baseview](https://github.com/RustAudio/baseview) and the
-[vst3-sys](https://github.com/RustAudio/vst3-sys) bindings to the Steinberg VST 3 API.
+[vst3-sys](https://github.com/RustAudio/vst3-sys) bindings to the Steinberg VST 3 API. All
+text in the editor is set in [Aileron](https://dotcolon.net/font/aileron/) by Sora Sagano.
 
 ## 15. License
 
@@ -635,8 +636,9 @@ dependencies. `cargo xtask bundle` copies `LICENSE` and `THIRD_PARTY_LICENSES.md
 If you distribute a build of ES 1, the GPL also tells you to make the complete corresponding
 source code available.
 
-The editor uses the fonts of the operating system (Segoe UI and Consolas on Windows). These
-fonts are not part of ES 1, and ES 1 does not distribute them.
+The editor uses the Aileron typeface by Sora Sagano, in the Regular and SemiBold weights. The
+font files are in `crates/es1-plugin/assets/fonts/` and are part of the plugin. Aileron is in
+the public domain (CC0 1.0 Universal, refer to `assets/fonts/LICENSE-CC0.txt`).
 
 ## 16. Trademarks
 

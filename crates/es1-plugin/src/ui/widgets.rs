@@ -25,10 +25,6 @@ pub const BODY_H: f32 = LINE_H + LINE_GAP + CELL_H;
 /// Rotary range: 300 degrees, with the gap at the bottom.
 const ARC: f32 = 300.0_f32 * core::f32::consts::PI / 180.0;
 
-fn text_width(ui: &Ui, s: &str, font: egui::FontId) -> f32 {
-    ui.fonts(|f| f.layout_no_wrap(s.to_string(), font, Color32::WHITE).size().x)
-}
-
 fn set_norm<P: Param>(setter: &ParamSetter, p: &P, v: f32) {
     setter.begin_set_parameter(p);
     setter.set_parameter_normalized(p, v);
@@ -65,7 +61,7 @@ fn drag_normalized<P: Param>(ui: &Ui, resp: &Response, p: &P, setter: &ParamSett
 fn cell_label(ui: &Ui, rect: Rect, text: &str, active: bool) {
     let pl = pal();
     let (font, color) = if active { (value_font(), pl.orange) } else { (label_font(), pl.ink) };
-    ui.painter().text(pos2(rect.center().x, rect.bottom() - 7.0), Align2::CENTER_CENTER, text, font, color);
+    put_text(ui.painter(), pos2(rect.center().x, rect.bottom() - 7.0), Align2::CENTER_CENTER, text, font, color);
 }
 
 /// Round knob in a cell. `main` = inverted cap for primary controls; `bipolar` fills the scale
@@ -115,7 +111,7 @@ pub fn knob<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, label: &str, mai
     painter.line_segment([c + dir * (r * 0.28), c + dir * (r - 2.0)], Stroke::new(2.0, line));
     let value = shown.unwrap_or_else(|| p.to_string());
     cell_label(ui, rect, &if active { value } else { label.to_string() }, active);
-    resp.on_hover_text(p.name())
+    resp.on_hover_text(p.name().to_lowercase())
 }
 
 /// Vertical fader spanning both lines (envelopes and levels).
@@ -145,22 +141,22 @@ pub fn fader<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, label: &str) ->
         Stroke::new(1.5, if resp.dragged() { pl.orange } else { pl.knob_line }),
     );
     cell_label(ui, rect, &if active { p.to_string() } else { label.to_string() }, active);
-    resp.on_hover_text(p.name())
+    resp.on_hover_text(p.name().to_lowercase())
 }
 
 /// Horizontal slider on a line, with end legends; `center` draws a centre detent mark.
 pub fn hslider<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, w: f32, left: &str, right: &str, center: bool) -> Response {
     let pl = pal();
-    let lw = text_width(ui, left, small_font());
-    let rw = text_width(ui, right, small_font());
+    let lw = text_width(ui.ctx(), left, small_font());
+    let rw = text_width(ui.ctx(), right, small_font());
     let (rect, resp) = ui.allocate_exact_size(vec2(w, LINE_H), Sense::click_and_drag());
     let x0 = rect.left() + lw + 10.0;
     let x1 = rect.right() - rw - 10.0;
     drag_normalized(ui, &resp, p, setter, x1 - x0, true);
     let painter = ui.painter_at(rect.expand(2.0));
     let y = rect.center().y;
-    painter.text(pos2(rect.left(), y), Align2::LEFT_CENTER, left, small_font(), pl.ink_soft);
-    painter.text(pos2(rect.right(), y), Align2::RIGHT_CENTER, right, small_font(), pl.ink_soft);
+    put_text(&painter, pos2(rect.left(), y), Align2::LEFT_CENTER, left, small_font(), pl.ink_soft);
+    put_text(&painter, pos2(rect.right(), y), Align2::RIGHT_CENTER, right, small_font(), pl.ink_soft);
     groove(&painter, Rect::from_min_max(pos2(x0 - 2.0, y - 2.0), pos2(x1 + 2.0, y + 2.0)));
     if center {
         let xc = 0.5 * (x0 + x1);
@@ -178,7 +174,7 @@ pub fn hslider<P: Param>(ui: &mut Ui, p: &P, setter: &ParamSetter, w: f32, left:
         [pos2(x, cap.top() + 4.0), pos2(x, cap.bottom() - 4.0)],
         Stroke::new(1.5, if resp.dragged() { pl.orange } else { pl.knob_line }),
     );
-    let text = format!("{}  {}", p.name(), p);
+    let text = format!("{}  {}", p.name().to_lowercase(), p);
     if resp.dragged() {
         egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), resp.id.with("tip"), |ui| ui.label(&text));
         resp
@@ -238,20 +234,20 @@ pub fn glyph(painter: &Painter, r: Rect, name: &str, color: Color32) {
 fn seg_width(ui: &Ui, s: &Seg) -> f32 {
     match s {
         Seg::Icon(_) => 26.0,
-        Seg::Text(t) => text_width(ui, t, label_font()) + 14.0,
+        Seg::Text(t) => text_width(ui.ctx(), t, label_font()) + 14.0,
     }
 }
 
 /// Adjoining keys; the selected key is filled. `base` is the plain value of the first item.
 pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg], base: i32, caption: Option<&str>) -> Response {
     let pl = pal();
-    let cap_w = caption.map(|c| text_width(ui, c, small_font()) + 8.0).unwrap_or(0.0);
+    let cap_w = caption.map(|c| text_width(ui.ctx(), c, small_font()) + 8.0).unwrap_or(0.0);
     let widths: Vec<f32> = items.iter().map(|s| seg_width(ui, s)).collect();
     let total: f32 = widths.iter().sum::<f32>() + cap_w;
     let (rect, resp) = ui.allocate_exact_size(vec2(total, LINE_H), Sense::click());
     let painter = ui.painter_at(rect.expand(4.0));
     if let Some(c) = caption {
-        painter.text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, c, small_font(), pl.ink_soft);
+        put_text(&painter, pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, c, small_font(), pl.ink_soft);
     }
     let keys = Rect::from_min_max(pos2(rect.left() + cap_w, rect.top()), rect.max);
     let cur = p.modulated_plain_value() - base;
@@ -285,7 +281,7 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
         match item {
             Seg::Icon(name) => glyph(&painter, *cell, name, col),
             Seg::Text(t) => {
-                painter.text(cell.center(), Align2::CENTER_CENTER, *t, label_font(), col);
+                put_text(&painter, cell.center(), Align2::CENTER_CENTER, *t, label_font(), col);
             }
         }
     }
@@ -318,15 +314,12 @@ pub fn segmented(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, items: &[Seg],
     resp.on_hover_text(format!("{}{}", p.name(), tip.map(|t| format!(": {t}")).unwrap_or_default()))
 }
 
-/// Indicator lamp: lit green when on, an open ring when off. The key face never changes, so
-/// "off" never reads as "disabled".
+/// Indicator: a solid ink dot when on, an open ring when off. The key face never changes, so
+/// "off" never reads as "disabled"; the accent colour stays reserved for the primary controls.
 fn lamp(painter: &Painter, c: Pos2, on: bool) {
     let pl = pal();
     if on {
-        painter.circle_filled(c, 7.0, pl.green.gamma_multiply(0.10));
-        painter.circle_filled(c, 5.0, pl.green.gamma_multiply(0.22));
-        painter.circle_filled(c, 3.2, pl.green);
-        painter.circle_filled(c + vec2(-0.9, -0.9), 1.1, white(150));
+        painter.circle_filled(c, 3.2, pl.ink);
     } else {
         painter.circle_filled(c, 3.2, pl.groove);
         painter.circle_stroke(c, 3.2, Stroke::new(1.0, pl.ink_soft.gamma_multiply(0.7)));
@@ -336,7 +329,7 @@ fn lamp(painter: &Painter, c: Pos2, on: bool) {
 /// Latching key with a lamp.
 pub fn toggle(ui: &mut Ui, p: &BoolParam, setter: &ParamSetter, text: &str) -> Response {
     let pl = pal();
-    let w = text_width(ui, text, label_font()) + 30.0;
+    let w = text_width(ui.ctx(), text, label_font()) + 30.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, LINE_H), Sense::click());
     let on = p.modulated_plain_value();
     if resp.clicked() {
@@ -348,8 +341,8 @@ pub fn toggle(ui: &mut Ui, p: &BoolParam, setter: &ParamSetter, text: &str) -> R
     let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
     raised(&painter, rect, 3.0, edge);
     lamp(&painter, pos2(rect.left() + 11.0, rect.center().y), on);
-    painter.text(pos2(rect.left() + 21.0, rect.center().y), Align2::LEFT_CENTER, text, label_font(), pl.ink);
-    resp.on_hover_text(p.name())
+    put_text(&painter, pos2(rect.left() + 21.0, rect.center().y), Align2::LEFT_CENTER, text, label_font(), pl.ink);
+    resp.on_hover_text(p.name().to_lowercase())
 }
 
 /// Section power key drawn at `rect` (in a tile heading).
@@ -366,8 +359,8 @@ pub fn power(ui: &mut Ui, p: &BoolParam, setter: &ParamSetter, rect: Rect) -> Re
     let edge = if resp.hovered() { pl.ink_soft } else { pl.key_edge };
     raised(&painter, rect, 3.0, edge);
     lamp(&painter, pos2(rect.left() + 10.0, rect.center().y), on);
-    painter.text(pos2(rect.left() + 19.0, rect.center().y), Align2::LEFT_CENTER, if on { "on" } else { "off" }, small_font(), pl.ink);
-    resp.on_hover_text(p.name())
+    put_text(&painter, pos2(rect.left() + 19.0, rect.center().y), Align2::LEFT_CENTER, if on { "on" } else { "off" }, small_font(), pl.ink);
+    resp.on_hover_text(p.name().to_lowercase())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -419,12 +412,12 @@ pub fn stepper(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: &str, w: 
     }
     let painter = ui.painter_at(rect.expand(1.0));
     glass(&painter, bx, 3.0);
-    painter.text(pos2(bx.left() + 8.0, bx.center().y), Align2::CENTER_CENTER, "‹", label_font(), pl.display_dim);
-    painter.text(pos2(bx.right() - 8.0, bx.center().y), Align2::CENTER_CENTER, "›", label_font(), pl.display_dim);
+    put_text(&painter, pos2(bx.left() + 8.0, bx.center().y), Align2::CENTER_CENTER, "‹", label_font(), pl.display_dim);
+    put_text(&painter, pos2(bx.right() - 8.0, bx.center().y), Align2::CENTER_CENTER, "›", label_font(), pl.display_dim);
     let active = resp.dragged();
-    painter.text(bx.center(), Align2::CENTER_CENTER, p.to_string(), value_font(), if active { pl.orange } else { pl.display_fg });
+    put_text(&painter, bx.center(), Align2::CENTER_CENTER, p.to_string(), value_font(), if active { pl.orange } else { pl.display_fg });
     cell_label(ui, rect, label, false);
-    resp.on_hover_text(p.name())
+    resp.on_hover_text(p.name().to_lowercase())
 }
 
 /// Small dark display showing the current choice; click opens a list. Wheel steps.
@@ -456,13 +449,13 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
         painter.rect_stroke(bx, CornerRadius::same(3), Stroke::new(1.0, pl.orange), StrokeKind::Inside);
     }
     let text = items.get(pos).map(|(_, s)| s.as_str()).unwrap_or("");
-    painter.text(pos2(bx.left() + 7.0, bx.center().y), Align2::LEFT_CENTER, text, label_font(), pl.display_fg);
+    put_text(&painter, pos2(bx.left() + 7.0, bx.center().y), Align2::LEFT_CENTER, text, label_font(), pl.display_fg);
     let a = pos2(bx.right() - 9.0, bx.center().y + 2.0);
     painter.add(Shape::convex_polygon(vec![a + vec2(-3.5, -4.0), a + vec2(3.5, -4.0), a], pl.display_dim, Stroke::NONE));
     if let Some(l) = label {
         cell_label(ui, rect, l, false);
     }
-    let resp = resp.on_hover_text(p.name());
+    let resp = resp.on_hover_text(p.name().to_lowercase());
     egui::popup::popup_below_widget(ui, popup_id, &resp, PopupCloseBehavior::CloseOnClickOutside, |ui| {
         ui.set_min_width(w.max(120.0));
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
@@ -477,7 +470,7 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
                     ui.painter().rect_filled(r, CornerRadius::same(3), pl.key);
                 }
                 let col = if sel { pl.key_sel_fg } else { pl.ink };
-                ui.painter().text(pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, name, label_font(), col);
+                put_text(ui.painter(), pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, name, label_font(), col);
                 if item.clicked() {
                     setter.begin_set_parameter(p);
                     setter.set_parameter(p, *v);
@@ -493,8 +486,8 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
 /// Two-way key pair that is not a parameter (e.g. the light/dark switch).
 pub fn choice_pair(ui: &mut Ui, a: &str, b: &str, second: bool) -> Option<bool> {
     let pl = pal();
-    let wa = text_width(ui, a, small_font()) + 14.0;
-    let wb = text_width(ui, b, small_font()) + 14.0;
+    let wa = text_width(ui.ctx(), a, small_font()) + 14.0;
+    let wb = text_width(ui.ctx(), b, small_font()) + 14.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(wa + wb, 18.0), Sense::click());
     let painter = ui.painter_at(rect.expand(4.0));
     let ra = Rect::from_min_size(rect.min, vec2(wa, 18.0));
@@ -506,8 +499,8 @@ pub fn choice_pair(ui: &mut Ui, a: &str, b: &str, second: bool) -> Option<bool> 
     painter.rect_filled(sel, cr, pl.key_sel);
     painter.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.0, pl.key_edge), StrokeKind::Inside);
     let _ = other;
-    painter.text(ra.center(), Align2::CENTER_CENTER, a, small_font(), if second { pl.ink } else { pl.key_sel_fg });
-    painter.text(rb.center(), Align2::CENTER_CENTER, b, small_font(), if second { pl.key_sel_fg } else { pl.ink });
+    put_text(&painter, ra.center(), Align2::CENTER_CENTER, a, small_font(), if second { pl.ink } else { pl.key_sel_fg });
+    put_text(&painter, rb.center(), Align2::CENTER_CENTER, b, small_font(), if second { pl.key_sel_fg } else { pl.ink });
     if resp.clicked() {
         let pos = resp.interact_pointer_pos()?;
         return Some(rb.contains(pos));

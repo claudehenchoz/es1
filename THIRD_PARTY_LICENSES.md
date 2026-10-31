@@ -127,6 +127,13 @@ printed once at the end and referenced by id.
 | zip | 2.6.1 | MIT | https://github.com/zip-rs/zip2.git | LICENSE [6b73e94dc52f](#6b73e94dc52f) |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij | LICENSE-MIT [fe2a9817987f](#fe2a9817987f) |
 
+## Fonts
+
+The editor embeds Aileron Regular and Aileron SemiBold (version 1.102) by Sora Sagano,
+dedicated to the public domain under CC0 1.0 Universal
+(https://creativecommons.org/publicdomain/zero/1.0/). The dedication is in
+`crates/es1-plugin/assets/fonts/LICENSE-CC0.txt` in the source code.
+
 ## Copyright holders (from crate metadata)
 
 * ab_glyph 0.2.32: Alex Butler
