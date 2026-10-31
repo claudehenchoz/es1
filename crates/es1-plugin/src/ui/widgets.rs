@@ -11,7 +11,7 @@ use super::paint::*;
 use super::theme::*;
 use nih_plug::prelude::{BoolParam, IntParam, Param, ParamSetter};
 use nih_plug_egui::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, Id, Painter, PopupCloseBehavior, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui,
+    self, pos2, vec2, Align2, Color32, CornerRadius, Id, Painter, PopupCloseBehavior, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
 };
 
 pub const CELL_W: f32 = 56.0;
@@ -423,7 +423,6 @@ pub fn stepper(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: &str, w: 
 /// Small dark display showing the current choice; click opens a list. Wheel steps.
 /// `items` are (plain value, label). With `label` it occupies a cell, otherwise a line.
 pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&str>, items: &[(i32, String)], w: f32) -> Response {
-    let pl = pal();
     let size = if label.is_some() { vec2(w, CELL_H) } else { vec2(w, LINE_H) };
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let bx = if label.is_some() { Rect::from_center_size(pos2(rect.center().x, rect.top() + 20.0), vec2(w - 8.0, LINE_H)) } else { rect };
@@ -442,28 +441,57 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
             setter.end_set_parameter(p);
         }
     }
-    let painter = ui.painter_at(rect.expand(1.0));
     let open = ui.memory(|m| m.is_popup_open(popup_id));
-    glass(&painter, bx, 3.0);
-    if open {
-        painter.rect_stroke(bx, CornerRadius::same(3), Stroke::new(1.0, pl.orange), StrokeKind::Inside);
-    }
-    let text = items.get(pos).map(|(_, s)| s.as_str()).unwrap_or("");
-    put_text(&painter, pos2(bx.left() + 7.0, bx.center().y), Align2::LEFT_CENTER, text, label_font(), pl.display_fg);
-    let a = pos2(bx.right() - 9.0, bx.center().y + 2.0);
-    painter.add(Shape::convex_polygon(vec![a + vec2(-3.5, -4.0), a + vec2(3.5, -4.0), a], pl.display_dim, Stroke::NONE));
+    display_box(&ui.painter_at(rect.expand(1.0)), bx, items.get(pos).map(|(_, s)| s.as_str()).unwrap_or(""), label_font(), open);
     if let Some(l) = label {
         cell_label(ui, rect, l, false);
     }
     let resp = resp.on_hover_text(p.name().to_lowercase());
-    egui::popup::popup_below_widget(ui, popup_id, &resp, PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        ui.set_min_width(w.max(120.0));
+    if let Some(i) = popup_list(ui, popup_id, &resp, w.max(120.0), items.iter().map(|(v, n)| (*v == cur, n.as_str()))) {
+        setter.begin_set_parameter(p);
+        setter.set_parameter(p, items[i].0);
+        setter.end_set_parameter(p);
+    }
+    resp
+}
+
+/// A small display that is not bound to a parameter (the editor size): shows `items[cur]`, a
+/// click opens the list. Returns the index the user picks.
+pub fn menu(ui: &mut Ui, id: &str, items: &[String], cur: usize, size: Vec2, tip: &str) -> Option<usize> {
+    let (bx, resp) = ui.allocate_exact_size(size, Sense::click());
+    let popup_id = Id::new(("es1-menu", id));
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    let open = ui.memory(|m| m.is_popup_open(popup_id));
+    display_box(&ui.painter_at(bx.expand(1.0)), bx, items.get(cur).map(String::as_str).unwrap_or(""), small_font(), open);
+    let resp = resp.on_hover_text(tip);
+    popup_list(ui, popup_id, &resp, bx.width().max(72.0), items.iter().enumerate().map(|(i, n)| (i == cur, n.as_str())))
+}
+
+/// Dark display glass with the current choice and a down arrow.
+fn display_box(painter: &Painter, bx: Rect, text: &str, font: egui::FontId, open: bool) {
+    let pl = pal();
+    glass(painter, bx, 3.0);
+    if open {
+        painter.rect_stroke(bx, CornerRadius::same(3), Stroke::new(1.0, pl.orange), StrokeKind::Inside);
+    }
+    put_text(painter, pos2(bx.left() + 7.0, bx.center().y), Align2::LEFT_CENTER, text, font, pl.display_fg);
+    let a = pos2(bx.right() - 9.0, bx.center().y + 2.0);
+    painter.add(Shape::convex_polygon(vec![a + vec2(-3.5, -4.0), a + vec2(3.5, -4.0), a], pl.display_dim, Stroke::NONE));
+}
+
+/// The list under a display; returns the index of the clicked item.
+fn popup_list<'a>(ui: &Ui, popup_id: Id, resp: &Response, w: f32, items: impl Iterator<Item = (bool, &'a str)>) -> Option<usize> {
+    let pl = pal();
+    let mut chosen = None;
+    egui::popup::popup_below_widget(ui, popup_id, resp, PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.set_min_width(w);
         egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            let row_w = ui.available_width().max(w.max(120.0) - 12.0);
-            for (v, name) in items {
+            let row_w = ui.available_width().max(w - 12.0);
+            for (i, (sel, name)) in items.enumerate() {
                 let (r, item) = ui.allocate_exact_size(vec2(row_w, 22.0), Sense::click());
-                let sel = *v == cur;
                 if sel {
                     ui.painter().rect_filled(r, CornerRadius::same(3), pl.key_sel);
                 } else if item.hovered() {
@@ -472,15 +500,13 @@ pub fn dropdown(ui: &mut Ui, p: &IntParam, setter: &ParamSetter, label: Option<&
                 let col = if sel { pl.key_sel_fg } else { pl.ink };
                 put_text(ui.painter(), pos2(r.left() + 8.0, r.center().y), Align2::LEFT_CENTER, name, label_font(), col);
                 if item.clicked() {
-                    setter.begin_set_parameter(p);
-                    setter.set_parameter(p, *v);
-                    setter.end_set_parameter(p);
+                    chosen = Some(i);
                     ui.memory_mut(|m| m.close_popup());
                 }
             }
         });
     });
-    resp
+    chosen
 }
 
 /// Two-way key pair that is not a parameter (e.g. the light/dark switch).

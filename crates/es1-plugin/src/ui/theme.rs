@@ -9,7 +9,7 @@
 
 use nih_plug_egui::egui::text::LayoutJob;
 use nih_plug_egui::egui::{self, vec2, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Rect, Stroke, TextFormat, Visuals};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 pub struct Palette {
@@ -174,21 +174,50 @@ fn settings_path() -> Option<std::path::PathBuf> {
     Some(base.join("ES 1").join("settings.txt"))
 }
 
-/// Read the global preference (shared by all instances).
+/// Editor scale presets, in percent of the design size.
+pub const SCALES: [u32; 10] = [50, 60, 70, 75, 80, 90, 100, 125, 150, 200];
+
+static SCALE: AtomicU32 = AtomicU32::new(100);
+
+/// The editor scale in percent (one of [`SCALES`]).
+pub fn scale_pct() -> u32 {
+    SCALE.load(Ordering::Relaxed)
+}
+
+/// Read the global preferences (shared by all instances on this computer).
 pub fn load_settings() {
     if let Some(s) = settings_path().and_then(|p| std::fs::read_to_string(p).ok()) {
-        let dark = s.lines().any(|l| l.trim() == "theme=dark");
-        IS_DARK.store(dark, Ordering::Relaxed);
+        for l in s.lines().map(str::trim) {
+            match l.split_once('=') {
+                Some(("theme", v)) => IS_DARK.store(v == "dark", Ordering::Relaxed),
+                Some(("scale", v)) => {
+                    if let Some(pct) = v.parse().ok().filter(|p| SCALES.contains(p)) {
+                        SCALE.store(pct, Ordering::Relaxed);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn save_settings() {
+    if let Some(p) = settings_path() {
+        let _ = std::fs::create_dir_all(p.parent().unwrap());
+        let theme = if is_dark() { "dark" } else { "light" };
+        let _ = std::fs::write(p, format!("theme={theme}\nscale={}\n", scale_pct()));
     }
 }
 
 pub fn set_dark(ctx: &egui::Context, dark: bool) {
     IS_DARK.store(dark, Ordering::Relaxed);
     apply(ctx);
-    if let Some(p) = settings_path() {
-        let _ = std::fs::create_dir_all(p.parent().unwrap());
-        let _ = std::fs::write(p, if dark { "theme=dark\n" } else { "theme=light\n" });
-    }
+    save_settings();
+}
+
+pub fn set_scale(pct: u32) {
+    SCALE.store(pct, Ordering::Relaxed);
+    save_settings();
 }
 
 // ---- fonts / visuals --------------------------------------------------------------------------
@@ -214,7 +243,7 @@ pub fn tracking(font: &FontId) -> f32 {
     if font.size <= 10.0 {
         0.8
     } else if font.size <= 11.0 {
-        0.4
+        0.2
     } else {
         0.0
     }

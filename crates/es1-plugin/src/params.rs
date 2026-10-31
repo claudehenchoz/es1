@@ -10,7 +10,6 @@
 
 use es1_dsp::params::{self, Kind, ParamDef, NUM_SY1};
 use nih_plug::prelude::*;
-use nih_plug_egui::EguiState;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -116,7 +115,6 @@ impl Default for PatchState {
 }
 
 pub struct Es1Params {
-    pub editor_state: Arc<EguiState>,
     pub patch: RwLock<PatchState>,
     pub banks: RwLock<Vec<StoredBank>>,
     pub master: FloatParam,
@@ -134,7 +132,6 @@ impl Default for Es1Params {
             by_sy1[d.sy1 as usize] = i;
         }
         Self {
-            editor_state: EguiState::from_size(crate::ui::WIDTH, crate::ui::HEIGHT),
             patch: RwLock::new(PatchState::default()),
             banks: RwLock::new(Vec::new()),
             master: FloatParam::new("Master Volume", 64.0, FloatRange::Linear { min: 0.0, max: 127.0 })
@@ -199,9 +196,6 @@ unsafe impl Params for Es1Params {
     fn serialize_fields(&self) -> BTreeMap<String, String> {
         use nih_plug::params::persist::{serialize_field, PersistentField};
         let mut m = BTreeMap::new();
-        if let Ok(s) = PersistentField::map(&self.editor_state, serialize_field) {
-            m.insert("editor-state".into(), s);
-        }
         if let Ok(s) = PersistentField::map(&self.patch, serialize_field) {
             m.insert("patch".into(), s);
         }
@@ -212,10 +206,7 @@ unsafe impl Params for Es1Params {
     }
 
     fn deserialize_fields(&self, serialized: &BTreeMap<String, String>) {
-        use nih_plug::params::persist::{deserialize_field, PersistentField};
-        if let Some(Ok(v)) = serialized.get("editor-state").map(|s| deserialize_field(s)) {
-            PersistentField::set(&self.editor_state, v);
-        }
+        use nih_plug::params::persist::deserialize_field;
         if let Some(Ok(v)) = serialized.get("patch").map(|s| deserialize_field::<PatchState>(s)) {
             *self.patch.write() = v;
         }

@@ -295,9 +295,10 @@ where
         };
 
         self.egui_input.time = Some(self.start_time.elapsed().as_secs_f64());
+        // ES 1: the egui zoom factor scales the whole UI (see `vendor/README.md`).
         self.egui_input.screen_rect = Some(calculate_screen_rect(
             self.physical_size,
-            self.points_per_pixel,
+            self.points_per_pixel / self.egui_ctx.zoom_factor(),
         ));
 
         self.egui_ctx.begin_pass(self.egui_input.take());
@@ -351,7 +352,7 @@ where
                 window,
                 self.bg_color,
                 self.physical_size,
-                self.pixels_per_point,
+                full_output.pixels_per_point,
                 &mut self.egui_ctx,
                 &mut full_output,
             );
@@ -416,7 +417,7 @@ where
                 } => {
                     self.update_modifiers(modifiers);
 
-                    let pos = pos2(position.x as f32, position.y as f32);
+                    let pos = pos2(position.x as f32, position.y as f32) / self.egui_ctx.zoom_factor();
                     self.pointer_pos_in_points = Some(pos);
                     self.egui_input.events.push(egui::Event::PointerMoved(pos));
                 }
@@ -462,7 +463,7 @@ where
 
                         baseview::ScrollDelta::Pixels { x, y } => (
                             egui::MouseWheelUnit::Point,
-                            egui::vec2(*x, *y) * self.points_per_pixel,
+                            egui::vec2(*x, *y) * self.points_per_pixel / self.egui_ctx.zoom_factor(),
                         ),
                     };
 
@@ -562,8 +563,10 @@ where
 
                     self.physical_size = window_info.physical_size();
 
-                    let screen_rect =
-                        calculate_screen_rect(self.physical_size, self.points_per_pixel);
+                    let screen_rect = calculate_screen_rect(
+                        self.physical_size,
+                        self.points_per_pixel / self.egui_ctx.zoom_factor(),
+                    );
 
                     self.egui_input.screen_rect = Some(screen_rect);
 

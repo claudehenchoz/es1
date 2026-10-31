@@ -18,6 +18,7 @@ use crate::params::{Es1Params, HostParam, StoredBank, NO_PROGRAM};
 use crate::Shared;
 use es1_dsp::params::{Kind, PARAMS};
 use es1_presets::{factory_bank, load_path, parse_sy1, to_latin1, write_sy1, Bank, Sy1Patch};
+use nih_plug::params::persist::PersistentField;
 use nih_plug::prelude::*;
 use nih_plug_egui::egui::{self, pos2, vec2, Align, Align2, CornerRadius, Layout, Rect, RichText, Sense, Stroke, StrokeKind, Ui, UiBuilder};
 use nih_plug_egui::{create_egui_editor, EguiState};
@@ -75,11 +76,77 @@ fn all_banks(params: &Es1Params) -> Vec<Bank> {
     v
 }
 
+/// The design size at the current editor scale, in logical pixels.
+fn scaled_size() -> (u32, u32) {
+    let s = scale_pct() as f32 / 100.0;
+    ((WIDTH as f32 * s).round() as u32, (HEIGHT as f32 * s).round() as u32)
+}
+
+fn store_size(state: &Arc<EguiState>, (w, h): (u32, u32)) {
+    if state.size() != (w, h) {
+        if let Ok(s) = Arc::try_unwrap(EguiState::from_size(w, h)) {
+            PersistentField::set(state, s);
+        }
+    }
+}
+
+/// The egui editor, with its window size taken from the scale preference. The preference is
+/// global, so another instance may have changed it since this one was last open; it is read
+/// again whenever the host asks for the size of a closed editor.
+struct ScaledEditor {
+    inner: Box<dyn Editor>,
+    state: Arc<EguiState>,
+}
+
+impl Editor for ScaledEditor {
+    fn spawn(&self, parent: ParentWindowHandle, context: Arc<dyn GuiContext>) -> Box<dyn std::any::Any + Send> {
+        load_settings();
+        store_size(&self.state, scaled_size());
+        self.inner.spawn(parent, context)
+    }
+
+    fn size(&self) -> (u32, u32) {
+        if !self.state.is_open() {
+            load_settings();
+            store_size(&self.state, scaled_size());
+        }
+        self.inner.size()
+    }
+
+    fn set_scale_factor(&self, factor: f32) -> bool {
+        self.inner.set_scale_factor(factor)
+    }
+
+    fn param_value_changed(&self, id: &str, normalized_value: f32) {
+        self.inner.param_value_changed(id, normalized_value)
+    }
+
+    fn param_modulation_changed(&self, id: &str, modulation_offset: f32) {
+        self.inner.param_modulation_changed(id, modulation_offset)
+    }
+
+    fn param_values_changed(&self) {
+        self.inner.param_values_changed()
+    }
+}
+
+/// Set the editor scale: resize the window and zoom the UI to match.
+fn change_scale(ctx: &egui::Context, setter: &ParamSetter, state: &Arc<EguiState>, pct: u32) {
+    set_scale(pct);
+    let (w, h) = scaled_size();
+    store_size(state, (w, h));
+    if setter.raw_context.request_resize() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(w as f32, h as f32)));
+        ctx.set_zoom_factor(pct as f32 / 100.0);
+    }
+}
+
 pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Editor>> {
-    let state: Arc<EguiState> = params.editor_state.clone();
+    let state: Arc<EguiState> = EguiState::from_size(WIDTH, HEIGHT);
+    let s2 = state.clone();
     let p2 = params.clone();
-    create_egui_editor(
-        state,
+    let inner = create_egui_editor(
+        state.clone(),
         UiState {
             #[cfg(debug_assertions)]
             started: None,
@@ -96,12 +163,14 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
             load_settings();
             install_fonts(ctx);
             apply(ctx);
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
+            ctx.set_zoom_factor(scale_pct() as f32 / 100.0);
             st.banks = all_banks(&p2);
             st.bank_sel = p2.patch.read().bank.min(st.banks.len().saturating_sub(1));
         },
         move |ctx, setter, st| {
             #[cfg(debug_assertions)]
-            selftest(&params, &shared, setter, st, ctx);
+            selftest(&params, &shared, &s2, setter, st, ctx);
             run_tween(&params, setter, st, ctx);
             poll_dialog(&params, &shared, setter, st, ctx);
             egui::CentralPanel::default().frame(egui::Frame::new().fill(pal().body)).show(ctx, |ui| {
@@ -111,7 +180,7 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
                 let origin = full.min + vec2(MARGIN, MARGIN);
                 let header = Rect::from_min_size(origin, vec2(CONTENT_W, HEADER_H));
                 brushed_plate(ui.painter(), Rect::from_min_max(full.min, pos2(full.right(), header.bottom() + HEADER_GAP * 0.5)));
-                ui.scope_builder(UiBuilder::new().max_rect(header), |ui| header_bar(ui, &cx, &shared, st, ctx));
+                ui.scope_builder(UiBuilder::new().max_rect(header), |ui| header_bar(ui, &cx, &shared, &s2, st, ctx));
                 let body_top = header.bottom() + HEADER_GAP;
                 if st.browser {
                     let r = Rect::from_min_max(pos2(origin.x, body_top), pos2(origin.x + CONTENT_W, full.bottom() - MARGIN));
@@ -124,14 +193,16 @@ pub fn create(params: Arc<Es1Params>, shared: Arc<Shared>) -> Option<Box<dyn Edi
                 about(ctx, st);
             }
         },
-    )
+    )?;
+    Some(Box::new(ScaledEditor { inner, state }))
 }
 
 /// Debug builds only: `ES1_UI_SELFTEST=step` steps to the next program 1.5 s after opening, so
 /// the preset tween can be captured; `=popup` opens the LFO 1 destination list; `=browser`
-/// opens the program browser; `=about` the about panel; `=import` presses the import key.
+/// opens the program browser; `=about` the about panel; `=import` presses the import key;
+/// `=scale:<percent>` changes the editor size.
 #[cfg(debug_assertions)]
-fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
+fn selftest(params: &Es1Params, shared: &Shared, state: &Arc<EguiState>, setter: &ParamSetter, st: &mut UiState, ctx: &egui::Context) {
     let Ok(mode) = std::env::var("ES1_UI_SELFTEST") else { return };
     let t0 = *st.started.get_or_insert_with(Instant::now);
     let el = t0.elapsed().as_secs_f32();
@@ -149,6 +220,12 @@ fn selftest(params: &Es1Params, shared: &Shared, setter: &ParamSetter, st: &mut 
             "popup" => ctx.memory_mut(|m| m.open_popup(egui::Id::new(("es1-dropdown", "LFO 1 Dest")))),
             "browser" => st.browser = true,
             "about" => st.about = true,
+            // `scale:<percent>`: change the editor size while open.
+            m if m.starts_with("scale:") => {
+                if let Some(pct) = m[6..].parse().ok().filter(|p| SCALES.contains(p)) {
+                    change_scale(ctx, setter, state, pct);
+                }
+            }
             // `import` opens the file dialog; with ES1_UI_IMPORT=<path> it imports that file directly.
             "import" => match std::env::var_os("ES1_UI_IMPORT") {
                 Some(path) => import(params, shared, setter, st, std::path::Path::new(&path)),
@@ -764,7 +841,7 @@ const DISPLAY_X: f32 = 156.0;
 const DISPLAY_W: f32 = 520.0;
 const PROGRAM_W: f32 = 300.0;
 
-fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egui::Context) {
+fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, state: &Arc<EguiState>, st: &mut UiState, ctx: &egui::Context) {
     let pl = pal();
     let h = ui.max_rect();
     let mid = h.center().y;
@@ -823,16 +900,27 @@ fn header_bar(ui: &mut Ui, cx: &Cx, shared: &Shared, st: &mut UiState, ctx: &egu
         }
     });
 
-    // Theme and master volume, right-aligned.
+    // Theme, editor size and master volume, right-aligned.
     let right = Rect::from_min_max(pos2(h.right() - 180.0, h.top()), h.max);
     ui.scope_builder(UiBuilder::new().max_rect(right).layout(Layout::right_to_left(Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         knob(ui, &cx.p.master, cx.s, "volume", true, false, None);
-        if let Some(dark) = choice_pair(ui, "light", "dark", is_dark()) {
-            if dark != is_dark() {
-                set_dark(ctx, dark);
+        ui.allocate_ui_with_layout(vec2(80.0, 42.0), Layout::top_down(Align::Max), |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            if let Some(dark) = choice_pair(ui, "light", "dark", is_dark()) {
+                if dark != is_dark() {
+                    set_dark(ctx, dark);
+                }
             }
-        }
+            let labels: Vec<String> = SCALES.iter().map(|p| format!("{p} %")).collect();
+            let cur = SCALES.iter().position(|&p| p == scale_pct()).unwrap_or(0);
+            let w = ui.min_rect().width().max(64.0);
+            if let Some(i) = menu(ui, "scale", &labels, cur, vec2(w, 18.0), "editor size") {
+                if SCALES[i] != scale_pct() {
+                    change_scale(ctx, cx.s, state, SCALES[i]);
+                }
+            }
+        });
     });
 }
 

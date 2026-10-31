@@ -144,6 +144,7 @@ The header is the top line of the panel. From left to right, it has these items:
 | **import** | Loads a `.sy1` patch or a `.zip` bank. Refer to [9.3](#93-import-patches-and-banks). |
 | **save** | Saves the current sound as a `.sy1` file. Refer to [9.4](#94-save-a-sound). |
 | **light** / **dark** | Sets the color scheme of the panel. ES 1 keeps this setting for all projects. |
+| Size menu (below **light** / **dark**) | Sets the size of the editor window, from 50 % to 200 %. At 100 %, the window is 1136 × 798 pixels. On a small screen, select 75 % or less. ES 1 keeps this setting for all projects on the computer. |
 | **volume** | The master volume, from silence to +9.2 dB. The center position is −1.7 dB. |
 
 The program number shows `---` when the sound is not a program of the current bank, for
@@ -475,6 +476,7 @@ host.
 |---|---|---|
 | The host does not show ES 1. | The host did not scan the plugin folder. | Make sure that `ES 1.vst3` is in the VST3 folder (section 3). Scan the plugins again in the host. |
 | macOS: the host does not load ES 1. | The plugin has the quarantine attribute. | Remove the attribute (section 3.2, step 3). |
+| The editor is larger than the screen. | The editor size is too large for the screen. | Select a smaller size in the size menu below **light** / **dark**, for example 75 %. |
 | There is no sound. | The amplifier **gain** or the **volume** is at the minimum. | Increase these values. Load the factory program 001 to compare. |
 | The sound is too loud or distorted. | The **drive**, the **resonance** or the delay **feedback** is too high. | Decrease these values, then decrease the **volume**. |
 | The arpeggiator, the delay or a synced LFO has a wrong speed. | The host does not send a tempo. | Set the tempo in the host. Without a host tempo, ES 1 uses 120 BPM. |
@@ -577,7 +579,7 @@ and Linux. Then it publishes a GitHub release. The workflow starts when you push
 3. Push the tag:
 
    ```sh
-   git tag v0.4.1 && git push origin v0.4.1
+   git tag v0.4.2 && git push origin v0.4.2
    ```
 
 If you start the workflow manually, it builds the packages but does not publish a release. The

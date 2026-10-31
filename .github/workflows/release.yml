@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Claude Henchoz
 
 # Builds ES 1 for Windows, macOS and Linux and publishes a GitHub release when a version tag
-# (v0.4.1, ...) is pushed. The tag must match the workspace version in Cargo.toml.
+# (v0.4.2, ...) is pushed. The tag must match the workspace version in Cargo.toml.
 # Run it by hand (Actions → Release → Run workflow) to build the packages without releasing;
 # they are then attached to the run as artifacts.
 

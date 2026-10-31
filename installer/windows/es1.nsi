@@ -4,7 +4,7 @@
 ; ES 1 installer: copies "ES 1.vst3" into the common VST3 folder
 ; (C:\Program Files\Common Files\VST3) and registers an uninstaller.
 ;
-;   makensis /DVERSION=0.4.1 /DBUNDLE=<path to ES 1.vst3> /DLICENSE=<path to LICENSE>
+;   makensis /DVERSION=0.4.2 /DBUNDLE=<path to ES 1.vst3> /DLICENSE=<path to LICENSE>
 ;            /DOUTFILE=<setup.exe> installer\windows\es1.nsi
 
 Unicode true
