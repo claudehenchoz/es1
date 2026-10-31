@@ -1,10 +1,5 @@
 # ES 1 (Elektronischer Synthesizer)
 
-ES 1 is the synthesizer that Braun never made.
-
-User manual. This manual is written in ASD-STE100 Simplified Technical English. Audio terms
-(oscillator, filter, envelope and others) are used as technical names.
-
 ## Contents
 
 1. [Introduction](#1-introduction)
