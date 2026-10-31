@@ -1,5 +1,12 @@
 # ES 1 (Elektronischer Synthesizer)
 
+ES 1 is a two-oscillator virtual analog synthesizer. The oscillators are band-limited and the
+filters have zero-delay feedback.
+
+<p align="center">
+  <img src="screenshot.png" alt="ES 1" width="640">
+</p>
+
 ## Contents
 
 1. [Introduction](#1-introduction)
@@ -24,10 +31,6 @@
 ES 1 is a software synthesizer in the VST3 plugin format. It operates in a host, for example a
 digital audio workstation (DAW). ES 1 receives MIDI notes from the host and sends a stereo audio
 signal to the host.
-
-ES 1 is a two-oscillator virtual analog synthesizer. The oscillators are band-limited and the
-filters have zero-delay feedback. The panel follows the design rules of Dieter Rams: few colors,
-a strict grid and one control for each function.
 
 ES 1 has these functions:
 
